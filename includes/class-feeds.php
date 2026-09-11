@@ -140,7 +140,7 @@ final class Feeds {
 	/* ---- run ---------------------------------------------------------- */
 
 	public static function run( bool $dry = false, string $only_feed = '' ): array {
-		$stats = [ 'created' => 0, 'updated' => 0, 'drafted' => 0, 'skipped' => 0, 'google' => [ 'inserted' => 0, 'updated' => 0, 'deleted' => 0 ], 'errors' => [], 'feeds' => [], 'dry' => $dry, 'ts' => time() ];
+		$stats = [ 'created' => 0, 'updated' => 0, 'drafted' => 0, 'skipped' => 0, 'merged' => 0, 'merges' => [], 'google' => [ 'inserted' => 0, 'updated' => 0, 'deleted' => 0 ], 'errors' => [], 'feeds' => [], 'dry' => $dry, 'ts' => time() ];
 
 		// Atomic acquire (GET_LOCK) instead of the old check-then-set transient:
 		// an overlapping cron tick + manual "Sync now" can no longer both pass.
@@ -151,6 +151,11 @@ final class Feeds {
 			return $stats;
 		}
 		$gcal = self::gcal();
+		// Google writes are deferred to a second pass: several feeds share one
+		// calendar, so duplicates have to be collapsed ACROSS feeds before any of
+		// them is written. The GASF destination is unaffected and still writes
+		// inline below.
+		$google_queue = [];
 
 		foreach ( self::feeds() as $feed ) {
 			if ( empty( $feed['enabled'] ) || ( $only_feed && ( $feed['id'] ?? '' ) !== $only_feed ) ) {
@@ -207,19 +212,66 @@ final class Feeds {
 			// Destination: Google Calendar. Scope on the STABLE feed id (not the
 			// editable label) so renaming a feed doesn't orphan + duplicate.
 			// A feed may target its own calendar via 'gcal_id'; global is the default.
+			// Queued rather than written now — see the merge pass below.
 			$cal_id = trim( (string) ( $feed['gcal_id'] ?? '' ) ) ?: (string) $gcal['calendar_id'];
 			if ( ! empty( $feed['dest_google'] ) && $cal_id && Google_Calendar::available() ) {
-				$g = Google_Calendar::sync_source( (string) $feed['id'], (string) ( $feed['label'] ?? $feed['id'] ), $cal_id, $fetch['events'], $dry, $prefix, trim( (string) ( $feed['gcal_color'] ?? '' ) ) );
-				if ( '' !== $g['error'] ) {
-					$stats['errors'][] = ( $fstat['label'] . ' (google): ' . $g['error'] );
-				} else {
-					$stats['google']['inserted'] += $g['inserted'];
-					$stats['google']['updated']  += $g['updated'];
-					$stats['google']['deleted']  += $g['deleted'];
-				}
+				$google_queue[] = [
+					'feed'   => $feed,
+					'events' => $fetch['events'],
+					'cal_id' => $cal_id,
+					'prefix' => $prefix,
+					'sync'   => true,
+				];
 			}
 
 			$stats['feeds'][] = $fstat;
+		}
+
+		/* ---- Collapse cross-feed duplicates, then write to Google -------- */
+		if ( $google_queue ) {
+			// A single-feed "Sync now" would otherwise re-insert the duplicates the
+			// last full run collapsed, because the definitive feed is not in the queue
+			// to match against. Pull it in for comparison only: 'sync' => false, so it
+			// is never written and cannot trigger its own deletions.
+			if ( $only_feed ) {
+				$google_queue = self::add_merge_references( $google_queue, $gcal );
+			}
+
+			// Bucketed per calendar: feeds pointed at DIFFERENT calendars are not
+			// duplicates of one another however alike their events look.
+			$buckets = [];
+			foreach ( $google_queue as $q ) {
+				$buckets[ $q['cal_id'] ][] = $q;
+			}
+			foreach ( $buckets as $queue ) {
+				$collapsed = Event_Merge::collapse( self::rank_for_merge( $queue ) );
+				foreach ( $collapsed['merges'] as $m ) {
+					$stats['merges'][] = $m;
+				}
+				foreach ( $collapsed['groups'] as $g ) {
+					if ( empty( $g['sync'] ) ) {
+						continue; // comparison-only reference feed
+					}
+					$gf  = $g['feed'];
+					$res = Google_Calendar::sync_source(
+						(string) $gf['id'],
+						(string) ( $gf['label'] ?? $gf['id'] ),
+						(string) $g['cal_id'],
+						$g['events'],
+						$dry,
+						(string) $g['prefix'],
+						trim( (string) ( $gf['gcal_color'] ?? '' ) )
+					);
+					if ( '' !== $res['error'] ) {
+						$stats['errors'][] = ( (string) ( $gf['label'] ?? '?' ) . ' (google): ' . $res['error'] );
+					} else {
+						$stats['google']['inserted'] += $res['inserted'];
+						$stats['google']['updated']  += $res['updated'];
+						$stats['google']['deleted']  += $res['deleted'];
+					}
+				}
+			}
+			$stats['merged'] = count( $stats['merges'] );
 		}
 
 		if ( ! $dry ) {
@@ -231,6 +283,66 @@ final class Feeds {
 			Alerts::flush();
 		}
 		return $stats;
+	}
+
+	/**
+	 * Definitive feeds first, config order preserved within each tier.
+	 *
+	 * Priority is positional: whatever comes first keeps its own title, times
+	 * and identity, and absorbs the rest. With no feed marked definitive this
+	 * degrades to config order, which still collapses the duplicates — just
+	 * with an arbitrary winner rather than a chosen one.
+	 */
+	private static function rank_for_merge( array $queue ): array {
+		$primary = [];
+		$rest    = [];
+		foreach ( $queue as $q ) {
+			if ( ! empty( $q['feed']['definitive'] ) ) {
+				$primary[] = $q;
+			} else {
+				$rest[] = $q;
+			}
+		}
+		return array_merge( $primary, $rest );
+	}
+
+	/**
+	 * Add the definitive feeds sharing a calendar with something already in the
+	 * queue, marked 'sync' => false. They exist only to be matched against, so a
+	 * single-feed run collapses its duplicates the same way a full run does.
+	 * A reference feed that will not fetch simply does not participate: failing
+	 * to read it must never turn into writing duplicates.
+	 */
+	private static function add_merge_references( array $queue, array $gcal ): array {
+		$cals = array_unique( array_column( $queue, 'cal_id' ) );
+		$have = array_column( array_column( $queue, 'feed' ), 'id' );
+		foreach ( self::feeds() as $feed ) {
+			if ( empty( $feed['enabled'] ) || empty( $feed['definitive'] ) || empty( $feed['dest_google'] ) ) {
+				continue;
+			}
+			if ( in_array( (string) ( $feed['id'] ?? '' ), $have, true ) ) {
+				continue;
+			}
+			$cal = trim( (string) ( $feed['gcal_id'] ?? '' ) ) ?: (string) $gcal['calendar_id'];
+			if ( ! in_array( $cal, $cals, true ) ) {
+				continue;
+			}
+			$fetch = self::fetch_feed( $feed );
+			if ( '' !== $fetch['error'] ) {
+				continue;
+			}
+			if ( '' !== trim( (string) ( $feed['filter'] ?? '' ) ) ) {
+				$fetch['events'] = self::apply_filter( $feed, $fetch['events'] );
+			}
+			$queue[] = [
+				'feed'   => $feed,
+				'events' => $fetch['events'],
+				'cal_id' => $cal,
+				'prefix' => trim( (string) ( $feed['prefix'] ?? '' ) ),
+				'sync'   => false,
+			];
+		}
+		return $queue;
 	}
 
 	/**

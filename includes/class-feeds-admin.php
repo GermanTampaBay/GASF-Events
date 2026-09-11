@@ -89,6 +89,7 @@ final class Feeds_Admin {
 			'gcal_color'  => ( '' !== (string) ( $_POST['gcal_color'] ?? '' ) && (int) $_POST['gcal_color'] >= 1 && (int) $_POST['gcal_color'] <= 11 ) ? (string) (int) $_POST['gcal_color'] : '',
 			'dest_ics'    => ! empty( $_POST['dest_ics'] ),
 			'link_source' => ! empty( $_POST['link_source'] ),
+			'definitive'  => ! empty( $_POST['definitive'] ),
 		];
 		if ( 'ics' === $type ) {
 			$feed['url'] = esc_url_raw( wp_unslash( $_POST['url'] ?? '' ) );
@@ -130,6 +131,7 @@ final class Feeds_Admin {
 			$f['gcal_color']  = ( '' !== (string) ( $_POST['gcal_color'] ?? '' ) && (int) $_POST['gcal_color'] >= 1 && (int) $_POST['gcal_color'] <= 11 ) ? (string) (int) $_POST['gcal_color'] : '';
 			$f['dest_ics']    = ! empty( $_POST['dest_ics'] );
 			$f['link_source'] = ! empty( $_POST['link_source'] );
+			$f['definitive']  = ! empty( $_POST['definitive'] );
 			if ( $f['dest_ics'] && empty( $f['ics_token'] ) ) { // keep a stable URL once minted
 				$f['ics_token'] = wp_generate_password( 24, false, false );
 			}
@@ -353,6 +355,8 @@ final class Feeds_Admin {
 					</p>
 					<p style="margin:0;">
 						<label><input type="checkbox" name="link_source" value="1" <?php checked( ! empty( $editing['link_source'] ) ); ?>> <?php esc_html_e( 'Link synced events back to their source (a “View original” button)', 'gasf-events' ); ?></label>
+						<br>
+						<label title="<?php esc_attr_e( 'When several feeds write to one Google Calendar and carry the same event, the definitive feed keeps its title and times and absorbs the others’ descriptions. Matching needs a close start AND end time AND a similar title.', 'gasf-events' ); ?>"><input type="checkbox" name="definitive" value="1" <?php checked( ! empty( $editing['definitive'] ) ); ?>> <?php esc_html_e( 'Definitive — duplicates from other feeds merge into this one', 'gasf-events' ); ?></label>
 						<span class="description"><?php esc_html_e( 'Off = native: the event stands on its own local page with no link out.', 'gasf-events' ); ?></span>
 					</p>
 					<?php $sub = Feeds::ics_subscribe_url( $editing ); if ( $sub ) : ?>

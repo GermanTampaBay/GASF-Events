@@ -56,6 +56,7 @@ final class Plugin {
 		require_once $dir . 'class-cover-sideloader.php';
 		require_once $dir . 'class-ics-parser.php';
 		require_once $dir . 'class-event-ingest.php';
+		require_once $dir . 'class-event-merge.php';
 		require_once $dir . 'class-google-calendar.php';
 		require_once $dir . 'class-alerts.php';
 		require_once $dir . 'class-feeds.php';

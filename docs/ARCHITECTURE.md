@@ -473,6 +473,26 @@ Decision (2026-06-28): generalize ingestion so the GASF Calendar can be fed by *
 - **Loop/dedup safety:** every ingested event carries its source + per-source UID; the Google marker is `gasf_mgr=gasf-events` (distinct from the old module's `calsync`) so the two never fight during parallel run.
 - **One admin home:** Events → **Feeds** (master gate, Google calendar id, per-feed destinations, dry-run/run, status + token-expiry + log, one-click import of FB tokens + Calendar-Sync ICS sources). Replaces the P5 sync page and the calsync tab.
 
+#### 7.3.1 Cross-feed duplicate merge (built 2026-09-11)
+Several feeds write to **one** Google Calendar (GASF, GCESV, GASCF), so a co-hosted event arrives two or three times and fills the merged view. `Event_Merge` collapses them.
+
+- **Scope: the Google destination only.** It is the only place many feeds share one calendar. The GASF Calendar dedups per-source UID in `Event_Ingest` and currently takes exactly one feed, so it cannot collide. The matcher is destination-agnostic so that stays true if the ICS feeds are ever pointed at `dest_gasf`.
+- **A match needs start AND end AND title — all three.** This is not belt-and-braces. Live data:
+
+```
+GASF   Oktoberfest          12:00 → 22:00
+GCESV  Oktoberfest GASF     12:00 → 22:00   same event, merged
+GCESV  Oktoberfest Tampa    17:00 → 19:00   different org, kept
+GCESV  Wellen Park O'fest   12:00 → 14:00   different org, kept
+```
+
+  "Oktoberfest Tampa" contains "Oktoberfest" and starts on the identical minute, so title+start alone merges two unrelated festivals. The **end time is the only discriminator**. Tolerance is ±30 min on each of start and end; a missing end is treated as ending at the start, so it never silently widens a match.
+- **Priority is positional.** Feeds flagged `definitive` sort first (Feeds → edit → *Definitive*), then config order. The winner keeps its title, times and identity; losers are dropped from their feed's list and their descriptions appended to the winner under a `— <feed label> —` attribution line. Unattributed text appearing inside a description is impossible to account for later.
+- **Deletion is self-healing.** `sync_source` removes managed events a feed no longer carries, so a duplicate suppressed upstream deletes its own stale Google copy on the next run. Nothing needs unwinding.
+- **Bucketed per calendar id** — feeds aimed at *different* calendars are never duplicates of one another, however alike their events look.
+- **Single-feed "Sync now" still merges.** It pulls the definitive feeds sharing that calendar in as comparison-only groups (`sync => false`, never written), otherwise syncing one feed alone would re-insert the duplicates the last full run collapsed.
+- **Every collapse is logged** to `$stats['merges']` (kept/dropped title, both feed labels, start) and surfaced in the sync log, so a wrong merge is visible rather than silent. A dry run shows it without writing.
+
 ---
 
 ### Appendix A — MEC → `gasf_event` meta crosswalk (for the migration script)
