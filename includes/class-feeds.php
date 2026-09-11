@@ -244,7 +244,15 @@ final class Feeds {
 				$buckets[ $q['cal_id'] ][] = $q;
 			}
 			foreach ( $buckets as $queue ) {
-				$collapsed = Event_Merge::collapse( self::rank_for_merge( $queue ) );
+				// Merging is opt-in per calendar: it runs only when a feed writing to
+				// THIS calendar is ticked Definitive. Falling back to config order
+				// instead would mean the checkbox that names the behaviour does not
+				// control it — unticking would look like "off" and still merge, just
+				// with an arbitrary winner.
+				$ranked    = self::rank_for_merge( $queue );
+				$collapsed = self::has_definitive( $queue )
+					? Event_Merge::collapse( $ranked )
+					: [ 'groups' => $ranked, 'merges' => [] ];
 				foreach ( $collapsed['merges'] as $m ) {
 					$stats['merges'][] = $m;
 				}
@@ -289,9 +297,9 @@ final class Feeds {
 	 * Definitive feeds first, config order preserved within each tier.
 	 *
 	 * Priority is positional: whatever comes first keeps its own title, times
-	 * and identity, and absorbs the rest. With no feed marked definitive this
-	 * degrades to config order, which still collapses the duplicates — just
-	 * with an arbitrary winner rather than a chosen one.
+	 * and identity, and absorbs the rest. Ordering alone never triggers a
+	 * merge — see has_definitive(); this only decides who wins once one is
+	 * going to happen.
 	 */
 	private static function rank_for_merge( array $queue ): array {
 		$primary = [];
@@ -304,6 +312,16 @@ final class Feeds {
 			}
 		}
 		return array_merge( $primary, $rest );
+	}
+
+	/** Is any feed writing to this calendar ticked Definitive? */
+	private static function has_definitive( array $queue ): bool {
+		foreach ( $queue as $q ) {
+			if ( ! empty( $q['feed']['definitive'] ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

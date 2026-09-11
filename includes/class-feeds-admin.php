@@ -295,6 +295,7 @@ final class Feeds_Admin {
 						<tr<?php echo $is_editing ? ' style="background:#fcf9e8;"' : ''; ?>>
 							<td><?php echo esc_html( $f['label'] ?? '' ); ?><?php
 								$mods = array_filter( [
+									! empty( $f['definitive'] ) ? __( 'definitive', 'gasf-events' ) : '',
 									! empty( $f['filter'] ) ? sprintf( /* translators: %s filter text */ __( 'filter: “%s”', 'gasf-events' ), $f['filter'] ) : '',
 									! empty( $f['prefix'] ) ? sprintf( /* translators: %s title prefix */ __( 'prefix: “%s”', 'gasf-events' ), $f['prefix'] ) : '',
 								] );
