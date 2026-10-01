@@ -71,7 +71,7 @@ In production. Do not click "Back to testing."
 Unverified-app warning during consent is expected (sensitive scope, verification
 skipped) — Advanced → "Go to … (unsafe)". Fine at one-user scale; 100-login cap.
 
-## 4. Current state — quota SOLVED, listing access is the open blocker
+## 4. Current state — SOLVED, ready to build
 
 **Resolved 2026-10-01.** The quota wall is gone, and it was never a provisioning
 failure. Google had allowlisted a **different project** the whole time.
@@ -118,25 +118,37 @@ Two things, neither of which required rebuilding credentials:
 With both in place the same untouched refresh token returned **HTTP 200** — the
 first successful Business Profile API call, 79 days after the approval email.
 
-### The remaining blocker: no credentials can see the listing
+### Listing access — it was never broken (correction, 2026-10-01)
 
-Quota was never the only door. It was just the only one visible while every call
-died at 429. The first successful `GET /v1/accounts` returned:
+**The existing credentials can read the listing. Nothing needs rebuilding.**
 
 ```
-accounts/104353862439095562681
-  "Michael Tressler (flinchbot)"   type: PERSONAL   role: None   UNVERIFIED
+ACCOUNT accounts/104353862439095562681 | Michael Tressler (flinchbot) | PERSONAL
+  locations: 1
+   - locations/16878027369244959781
+     title : German-American Society
+     site  : http://www.germantampabay.com/
+     addr  : 8098 66th Street North, Pinellas Park, Florida
 ```
 
-An empty personal container — no GASF location in it. And Business Profile Manager
-under the **club** account reports **0 businesses / "You haven't added any
-businesses"**.
+**Location ID: `locations/16878027369244959781`** — this is the value §6 needs
+stored in plugin settings. It never changes.
 
-So **neither account manages the GASF Business Profile listing.** A rebuilt refresh
-token under either one would authenticate perfectly and still see nothing to write
-hours to. Finding who holds the listing is now the critical path, and it is an
-organisational question rather than a technical one — a club officer, a former
-webmaster, or whoever originally claimed the profile.
+⚠️ **The trap that produced an hour of wrong conclusions.** `GET /v1/accounts`
+lists **account containers, not locations**. The first successful call returned one
+container — `type: PERSONAL`, `role: None`, `UNVERIFIED` — which looks exactly like
+an empty account with no business in it. It is not. A personal Google account that
+directly owns a listing renders precisely that way, and the location only appears
+from:
+
+```
+GET /v1/accounts/{accountId}/locations?readMask=name,title,storefrontAddress
+```
+
+Reading the accounts list as proof of listing access is wrong. Always run the
+locations query before concluding anything about who can see what. Business Profile
+Manager showing "0 businesses" for a *different* account proves nothing about this
+one either.
 
 ### History (resolved — kept because the dead ends cost 79 days)
 
@@ -176,34 +188,33 @@ Never place credentials under `public_html`; it is publicly served.
 
 ## 6. Next steps
 
-**Blocked on step 1 — everything after it is mechanical.**
+**Nothing is blocked. Everything below is implementation.**
 
-1. **Find who manages the GASF Business Profile listing.** Neither the club account
-   nor `flinchbot` does (§4). Check the profile's *Managers* list, or ask whoever
-   claimed it originally.
-2. **Have them add the club Google account as an Owner of the listing.** Owner, not
-   Manager, and the club account rather than anyone's personal Gmail — this is a
-   club asset that has to outlive whoever currently holds it.
-3. **Create the OAuth consent screen + Desktop client inside
-   `gas-calendar-sync-500618`** and consent as the club account. Everything then
-   lives in one club-owned project: no `x-goog-user-project` header, no
-   cross-project IAM grant, and `flinchbot`'s Service Usage Consumer role can be
-   revoked as cleanup. Set the consent screen **External + In production** or the
-   refresh token dies after 7 days (§3).
-4. Replace `/home4/germanta/gasf-gbp-key.json` with the new three values and verify
-   `GET /v1/accounts` returns the GASF location rather than an empty personal
-   account.
-5. Build `includes/class-google-business-profile.php` — mirror `Google_Calendar`
-   structure, `refresh_token` grant, transient-cached access token.
-6. Store the location ID once: `GET .../v1/accounts` then
-   `GET .../v1/accounts/{id}/locations?readMask=name,title` → save
-   `locations/{locationId}` in plugin settings; it never changes.
-7. Implement the rolling-window rebuild of `specialHours` (§2 — full replace, not
-   append).
+Quota works (§4, via the header + IAM grant), the credentials can read the listing,
+and the location ID is known. The integration can be built as-is.
 
-If step 2 proves impossible, the fallback is to mint the refresh token from
-whichever account *does* hold the listing, keeping the header + IAM grant from §4.
-That works, but ties a club integration to one person's Google account.
+1. Build `includes/class-google-business-profile.php` — mirror `Google_Calendar`
+   structure, `refresh_token` grant, transient-cached access token. It **must send
+   `x-goog-user-project: 572555189848`** on every call, or every request dies at
+   429 against `gasf-places`' zero quota.
+2. Store `locations/16878027369244959781` in plugin settings (already discovered,
+   §4 — no need to re-run the account/location walk).
+3. Implement the rolling-window rebuild of `specialHours` (§2 — full replace, not
+   append; recompute the whole ~90-day window every run).
+
+### Optional cleanup, not required
+
+The credentials live in the personal `gasf-places` project and reach quota through
+a header plus a cross-project IAM grant. That works and is verified. Moving the
+OAuth consent screen + Desktop client into `gas-calendar-sync-500618` and
+re-consenting as the club account would drop both the header and the grant, and put
+the integration wholly under club ownership. Worth doing eventually for an asset
+that should outlive any one person's Google account — but it buys durability, not
+function, and it means a fresh consent flow (External + **In production**, §3).
+
+The club account was added as an Owner of the Business Profile listing on
+2026-10-01. That was done on a mistaken reading (see the correction in §4) but is
+worth keeping regardless: listing ownership should not rest on one personal Gmail.
 
 ## 7. Unrelated bug spotted — FIXED
 
