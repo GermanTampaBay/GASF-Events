@@ -58,6 +58,8 @@ final class Plugin {
 		require_once $dir . 'class-event-ingest.php';
 		require_once $dir . 'class-event-merge.php';
 		require_once $dir . 'class-google-calendar.php';
+		require_once $dir . 'class-google-business-profile.php';
+		require_once $dir . 'class-hours-sync.php';
 		require_once $dir . 'class-alerts.php';
 		require_once $dir . 'class-feeds.php';
 		require_once $dir . 'class-syndication.php';  // interface + registry (before destinations)
@@ -99,6 +101,7 @@ final class Plugin {
 		( new Print_View() )->register_hooks();
 		( new Rest() )->register_hooks();
 		( new Feeds() )->register_hooks();
+		( new Hours_Sync() )->register_hooks();
 		( new Syndication() )->register_hooks();
 		( new Stats() )->register_hooks();
 
