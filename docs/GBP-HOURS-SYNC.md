@@ -73,7 +73,7 @@ In production. Do not click "Back to testing."
 Unverified-app warning during consent is expected (sensitive scope, verification
 skipped) — Advanced → "Go to … (unsafe)". Fine at one-user scale; 100-login cap.
 
-## 4. Current state — SOLVED, ready to build
+## 4. Quota and listing access — SOLVED (2026-10-01)
 
 **Resolved 2026-10-01.** The quota wall is gone, and it was never a provisioning
 failure. Google had allowlisted a **different project** the whole time.
