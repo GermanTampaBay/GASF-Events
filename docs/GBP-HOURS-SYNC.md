@@ -14,6 +14,8 @@ Profile UI and routinely go stale, so visitors arrive on wrong information.
 Target: a scheduled sync that rebuilds the listing's `specialHours` from the
 `gasf_event` CPT.
 
+**Status: BUILT AND LIVE (v0.29.0, 2026-10-01).** First hours published. Automatic sync is still switched OFF on purpose — see §6.
+
 ## 2. Which API (this is the part that trips people up)
 
 **Not the Places API.** Places is read-only — it can report `opening_hours` but
@@ -186,21 +188,85 @@ The API is an efficiency win, not the only route to correct hours.
 
 Never place credentials under `public_html`; it is publicly served.
 
-## 6. Next steps
+## 6. Built and live (v0.29.0, 2026-10-01)
 
-**Nothing is blocked. Everything below is implementation.**
+### What shipped
 
-Quota works (§4, via the header + IAM grant), the credentials can read the listing,
-and the location ID is known. The integration can be built as-is.
+- **`includes/class-google-business-profile.php`** — refresh_token grant,
+  transient-cached token, bounded retry. Sends `x-goog-user-project` on every
+  call. Does NOT retry 401/403/404: those are configuration, and retrying them
+  burns the 300/min quota three times faster.
+- **`includes/class-hours-sync.php`** — builds `specialHours` from the calendar,
+  change-triggered with a 120s debounce plus a daily sweep, payload hashed
+  against the last push.
 
-1. Build `includes/class-google-business-profile.php` — mirror `Google_Calendar`
-   structure, `refresh_token` grant, transient-cached access token. It **must send
-   `x-goog-user-project: 572555189848`** on every call, or every request dies at
-   429 against `gasf-places`' zero quota.
-2. Store `locations/16878027369244959781` in plugin settings (already discovered,
-   §4 — no need to re-run the account/location walk).
-3. Implement the rolling-window rebuild of `specialHours` (§2 — full replace, not
-   append; recompute the whole ~90-day window every run).
+### The model, as built
+
+`regularHours` is the always-true baseline and **the plugin never writes it**.
+`specialHours` is generated per-date from `gasf_event`.
+
+A day's published hours are the **union** of its regular hours and its events, not
+a replacement — Saturday 18–22 plus an Oktoberfest event 12–22 is 12–22; a
+Saturday with a 19:00–23:00 concert is 18–23. A day whose union *equals* its
+regular hours emits nothing, so the published set only ever holds real exceptions.
+
+**A special-hours date replaces that whole day.** If a day needs any override it
+must describe the entire day, not just the extra part — which is why Sat 2026-10-17
+publishes two periods (12:30–14:00 and 18:00–22:00) even though the evening one is
+identical to regular hours. Emitting only the afternoon would have deleted the
+evening.
+
+### Safety properties worth not breaking
+
+- Full replace every run, so it is self-healing and carries no drift state.
+- An empty event query does **not** publish an empty set — indistinguishable from
+  "the calendar failed to load", and one PATCH would wipe every override. Same
+  fail-safe as `Feeds::run()` refusing to prune on an empty fetch.
+- All-day events are skipped, not guessed at. Events spanning ≥24h are skipped —
+  Google cannot express them. Cancelled events do not open the hall. All three are
+  reported in the run's `notes` rather than silently dropped.
+
+### The 2026-10-01 cutover
+
+Published in **one** PATCH (`updateMask=regularHours,specialHours`) so there was
+never a moment where an Oktoberfest Saturday showed 18:00 instead of noon:
+
+```
+regularHours  SATURDAY 18:00-22:00      (replacing FRI 17-22 + SAT 12-22)
+specialHours  9 periods, 2026-10-02 .. 2026-10-17
+```
+
+Both old `regularHours` values were hand-copies of Oktoberfest event times and
+would have needed hand-reverting on Oct 11. They now live as special hours that
+expire on their own.
+
+The window was deliberately bounded to 17 days for the first write, so a bug could
+not reach beyond two weeks. `build()` takes a regular-hours override for exactly
+this: the intended baseline has to drive the computation **before** it is
+published, or the union is taken against the values being replaced.
+
+⚠️ **Google echoes `endDate` back on every period**, set equal to `startDate` when
+you omit it (its documented default). A readback that appears to show every period
+ending "the next day" is almost certainly a display bug in whatever is printing it —
+compare the dates before believing it.
+
+### Current state and what is left
+
+| | |
+|---|---|
+| Hours published | ✅ 2026-10-02 .. 2026-10-17 |
+| `gasf_events_gbp_enable` | **false** — no cron, no trigger fires |
+| `gasf_events_gbp_window` | 17 days (raise to 90 when trusted) |
+| `gasf_events_gbp_location` | `locations/16878027369244959781` |
+
+1. **Watch the Oct 2–3 Oktoberfest weekend land correctly in the wild**, then
+   enable auto-sync and widen the window to 90.
+2. Data gaps found during the cutover, all fixable without code: *Schuhplattler
+   Practice* 2026-10-06 is a **draft** (correctly excluded); *Krampus Verein
+   Monthly Meetup* 2026-10-16 has start == end so no hours can be derived;
+   *Crafting at the Club* has no occurrence dated today or later.
+3. Admin UI. The settings are options only — there is no Events → Settings panel
+   for enable / window / buffer / location yet.
 
 ### Optional cleanup, not required
 
