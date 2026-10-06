@@ -23,7 +23,7 @@ final class Feeds {
 	const OPT_LAST_RUN = 'gasf_events_last_run';
 	const OPT_LOG      = 'gasf_events_sync_log';
 	const CRON_HOOK    = 'gasf_events_sync';
-	const SCHEDULE     = 'gasf_events_15min';
+	const SCHEDULE     = 'gasf_events_30min'; // was 15: the host rate-limits the whole site (0.29.1)
 	const LOCK         = 'gasf_events_sync_lock';
 
 	public function register_hooks(): void {
@@ -33,12 +33,18 @@ final class Feeds {
 	}
 
 	public function schedule( array $s ): array {
-		$s[ self::SCHEDULE ] = [ 'interval' => 15 * MINUTE_IN_SECONDS, 'display' => __( 'Every 15 minutes (GASF)', 'gasf-events' ) ];
+		$s[ self::SCHEDULE ] = [ 'interval' => 30 * MINUTE_IN_SECONDS, 'display' => __( 'Every 30 minutes (GASF)', 'gasf-events' ) ];
 		return $s;
 	}
 
 	public function sync_cron_state(): void {
 		$scheduled = (bool) wp_next_scheduled( self::CRON_HOOK );
+		// An event left on an older schedule counts as scheduled and would
+		// keep its old cadence forever, so move it.
+		if ( $scheduled && self::SCHEDULE !== wp_get_schedule( self::CRON_HOOK ) ) {
+			wp_clear_scheduled_hook( self::CRON_HOOK );
+			$scheduled = false;
+		}
 		if ( self::enabled() && ! $scheduled ) {
 			wp_schedule_event( time() + 60, self::SCHEDULE, self::CRON_HOOK );
 		} elseif ( ! self::enabled() && $scheduled ) {
