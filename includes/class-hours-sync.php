@@ -54,6 +54,13 @@ final class Hours_Sync {
 	/** Google's own ceiling: a special-hour period must span under 24 hours. */
 	const MAX_SPAN = 1439;
 
+	/**
+	 * Of Meta::STATUSES, these mean the hall is not open for that event.
+	 * `sold_out` is deliberately absent: a full house is still an open house,
+	 * and dropping it would publish "closed" on the busiest nights of the year.
+	 */
+	const CLOSED_STATUSES = [ 'cancelled', 'postponed', 'online_only' ];
+
 	public function register_hooks(): void {
 		add_action( 'save_post_' . GASF_EVENTS_CPT, [ __CLASS__, 'on_save' ], 20, 3 );
 		add_action( 'transition_post_status', [ __CLASS__, 'on_transition' ], 20, 3 );
@@ -219,8 +226,8 @@ final class Hours_Sync {
 		$counted = 0;
 		foreach ( $ids as $id ) {
 			$status = (string) get_post_meta( $id, Meta::STATUS, true );
-			if ( 'cancelled' === $status ) {
-				continue; // a cancelled event does not open the hall
+			if ( in_array( $status, self::CLOSED_STATUSES, true ) ) {
+				continue;
 			}
 			if ( get_post_meta( $id, Meta::ALL_DAY, true ) ) {
 				// "All day" says nothing about when the doors are open, and
