@@ -57,6 +57,7 @@ final class Plugin {
 		require_once $dir . 'class-ics-parser.php';
 		require_once $dir . 'class-event-ingest.php';
 		require_once $dir . 'class-event-merge.php';
+		require_once $dir . 'class-venues.php';
 		require_once $dir . 'class-google-calendar.php';
 		require_once $dir . 'class-google-business-profile.php';
 		require_once $dir . 'class-hours-sync.php';
@@ -72,6 +73,7 @@ final class Plugin {
 			require_once $dir . 'class-admin-list.php';
 			require_once $dir . 'class-feeds-admin.php';
 			require_once $dir . 'class-bulk-actions.php';
+			require_once $dir . 'class-event-duplicate.php';
 		}
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			require_once $dir . 'class-cli.php';
@@ -111,6 +113,7 @@ final class Plugin {
 			( new Series() )->register_hooks();
 			( new Feeds_Admin() )->register_hooks();
 			( new Bulk_Actions() )->register_hooks();
+			( new Event_Duplicate() )->register_hooks();
 		}
 
 		load_plugin_textdomain( 'gasf-events', false, dirname( plugin_basename( GASF_EVENTS_FILE ) ) . '/languages' );

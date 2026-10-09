@@ -110,6 +110,36 @@ final class Meta_Box {
 
 			<fieldset class="adv">
 				<label class="row" style="margin-top:0;"><?php esc_html_e( 'Override venue (optional — leave blank to use the club)', 'gasf-events' ); ?></label>
+				<?php $gasf_saved_venues = Venues::all(); ?>
+				<?php if ( $gasf_saved_venues ) : ?>
+					<select id="gasf-venue-pick" style="width:48%;margin-bottom:6px;">
+						<option value=""><?php esc_html_e( '— Reuse a saved venue —', 'gasf-events' ); ?></option>
+						<?php foreach ( $gasf_saved_venues as $gasf_v ) : ?>
+							<option value="<?php echo esc_attr( (string) wp_json_encode( $gasf_v ) ); ?>"><?php
+								echo esc_html( $gasf_v['name'] . ( '' !== $gasf_v['city'] ? ' — ' . $gasf_v['city'] : '' ) );
+							?></option>
+						<?php endforeach; ?>
+					</select>
+					<script>
+					( function () {
+						var pick = document.getElementById( 'gasf-venue-pick' );
+						if ( ! pick ) { return; }
+						pick.addEventListener( 'change', function () {
+							if ( ! this.value ) { return; }
+							var v;
+							try { v = JSON.parse( this.value ); } catch ( e ) { return; }
+							[ 'name', 'street', 'city', 'state', 'zip' ].forEach( function ( f ) {
+								var el = document.querySelector( '[name="gasf_venue[' + f + ']"]' );
+								if ( el ) { el.value = v[ f ] || ''; }
+							} );
+							// Back to the placeholder: the dropdown fills the fields and then
+							// stops mattering — the text inputs are what actually get saved,
+							// and leaving a name selected implies otherwise.
+							this.selectedIndex = 0;
+						} );
+					} )();
+					</script>
+				<?php endif; ?>
 				<input type="text" name="gasf_venue[name]" placeholder="<?php esc_attr_e( 'Venue name', 'gasf-events' ); ?>" value="<?php echo esc_attr( $venue_ov['name'] ?? '' ); ?>" style="width:48%;">
 				<input type="text" name="gasf_venue[street]" placeholder="<?php esc_attr_e( 'Street', 'gasf-events' ); ?>" value="<?php echo esc_attr( $venue_ov['street'] ?? '' ); ?>" style="width:48%;">
 				<input type="text" name="gasf_venue[city]" placeholder="<?php esc_attr_e( 'City', 'gasf-events' ); ?>" value="<?php echo esc_attr( $venue_ov['city'] ?? '' ); ?>">
@@ -239,7 +269,11 @@ final class Meta_Box {
 		// Venue override (only stored when a name is given).
 		$venue_in = (array) ( $_POST['gasf_venue'] ?? [] );
 		if ( ! empty( $venue_in['name'] ) ) {
-			update_post_meta( $post_id, Meta::VENUE_OVERRIDE, array_map( 'sanitize_text_field', wp_unslash( $venue_in ) ) );
+			$venue_clean = array_map( 'sanitize_text_field', wp_unslash( $venue_in ) );
+			update_post_meta( $post_id, Meta::VENUE_OVERRIDE, $venue_clean );
+			// Remember it for next time — this is the whole point for the subgroups,
+			// who hit the same handful of outside venues year after year.
+			Venues::remember( $venue_clean );
 		} else {
 			delete_post_meta( $post_id, Meta::VENUE_OVERRIDE );
 		}
