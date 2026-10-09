@@ -39,6 +39,12 @@ final class Hours_Sync {
 	const OPT_BUFFER   = 'gasf_events_gbp_buffer';      // minutes before start
 	const OPT_HASH     = 'gasf_events_gbp_hash';        // last pushed payload
 	const OPT_LAST     = 'gasf_events_gbp_last';        // last run stats
+	const OPT_HEALTH   = 'gasf_events_gbp_health';      // last outcome, for the admin notice
+
+	/** No successful sync in this long means something is wrong, even with no
+	 * error recorded — a dead cron fails silently and is the worst case,
+	 * because the hours simply freeze while looking fine. Two missed daily runs. */
+	const STALE_AFTER = 172800; // 48 hours
 	const REG_CACHE    = 'gasf_events_gbp_regular';     // regularHours, 12h
 
 	const CRON_PUSH  = 'gasf_events_gbp_push';
@@ -302,7 +308,23 @@ final class Hours_Sync {
 	 *
 	 * @return array{pushed:bool,periods:int,skipped:string,error:string,notes:array}
 	 */
+	/**
+	 * Rebuild and publish, recording the outcome either way.
+	 *
+	 * The recording is here rather than inside run_inner() because that method
+	 * returns from a dozen places; funnelling through one wrapper is the only
+	 * way to be sure no failure escapes unlogged, which is exactly how this
+	 * went unnoticed before.
+	 */
 	public static function run( bool $dry = false ): array {
+		$out = self::run_inner( $dry );
+		if ( ! $dry ) {
+			self::record_health( $out );
+		}
+		return $out;
+	}
+
+	private static function run_inner( bool $dry = false ): array {
 		$out = [ 'pushed' => false, 'periods' => 0, 'skipped' => '', 'error' => '', 'notes' => [], 'dry' => $dry ];
 		if ( ! self::enabled() ) {
 			$out['skipped'] = 'disabled';
@@ -357,6 +379,82 @@ final class Hours_Sync {
 		update_option( self::OPT_LAST, [ 'ts' => time(), 'periods' => $out['periods'], 'events' => $built['events'] ], false );
 		$out['pushed'] = true;
 		return $out;
+	}
+
+	/* ---- health ------------------------------------------------------- */
+
+	/**
+	 * Remember how the last real run went, so the dashboard can say something.
+	 *
+	 * "unchanged" counts as healthy: the sync ran, compared, and correctly had
+	 * nothing to send. Treating it as a non-event would make a stable calendar
+	 * look like a dead cron.
+	 */
+	private static function record_health( array $out ): void {
+		if ( 'disabled' === $out['skipped'] ) {
+			return; // switched off on purpose is neither success nor failure
+		}
+		$h = (array) get_option( self::OPT_HEALTH, [] );
+		if ( '' !== $out['error'] ) {
+			$h['fail_ts']   = time();
+			$h['fail_msg']  = mb_strimwidth( $out['error'], 0, 300, '…' );
+			$h['fail_kind'] = self::classify( $out['error'] );
+			$h['fails']     = (int) ( $h['fails'] ?? 0 ) + 1;
+		} else {
+			$h['ok_ts'] = time();
+			$h['fails'] = 0;
+			unset( $h['fail_msg'], $h['fail_kind'], $h['fail_ts'] );
+		}
+		update_option( self::OPT_HEALTH, $h, false );
+	}
+
+	/**
+	 * Bucket an error message so the notice can give real advice instead of
+	 * echoing an API string at someone who cannot act on it.
+	 */
+	private static function classify( string $msg ): string {
+		$m = strtolower( $msg );
+		if ( false !== strpos( $m, 'token exchange failed' ) || false !== strpos( $m, 'invalid_grant' ) ) {
+			return 'auth';
+		}
+		if ( false !== strpos( $m, '429' ) || false !== strpos( $m, 'resource_exhausted' ) || false !== strpos( $m, 'exhausted retries' ) ) {
+			return 'quota';
+		}
+		if ( false !== strpos( $m, '403' ) || false !== strpos( $m, 'permission' ) ) {
+			return 'permission';
+		}
+		if ( false !== strpos( $m, '404' ) ) {
+			return 'missing';
+		}
+		if ( false !== strpos( $m, 'key file' ) || false !== strpos( $m, 'location id' ) ) {
+			return 'config';
+		}
+		return 'other';
+	}
+
+	/**
+	 * Current health: [ ok, kind, message, since ].
+	 * kind '' means healthy; 'stale' means no error but nothing has run either.
+	 */
+	public static function health(): array {
+		if ( ! self::enabled() ) {
+			return [ 'ok' => true, 'kind' => '', 'message' => '', 'since' => 0 ];
+		}
+		$h = (array) get_option( self::OPT_HEALTH, [] );
+		if ( ! empty( $h['fails'] ) ) {
+			return [
+				'ok'      => false,
+				'kind'    => (string) ( $h['fail_kind'] ?? 'other' ),
+				'message' => (string) ( $h['fail_msg'] ?? '' ),
+				'since'   => (int) ( $h['fail_ts'] ?? 0 ),
+				'fails'   => (int) $h['fails'],
+			];
+		}
+		$ok_ts = (int) ( $h['ok_ts'] ?? 0 );
+		if ( $ok_ts && ( time() - $ok_ts ) > self::STALE_AFTER ) {
+			return [ 'ok' => false, 'kind' => 'stale', 'message' => '', 'since' => $ok_ts, 'fails' => 0 ];
+		}
+		return [ 'ok' => true, 'kind' => '', 'message' => '', 'since' => $ok_ts, 'fails' => 0 ];
 	}
 
 	/* ---- helpers ------------------------------------------------------ */
