@@ -183,9 +183,13 @@ final class Welton {
 	 * invited the club as co-organiser, so it arrived under the full legal name.
 	 * It only ever appears on FRIDAYS, always duplicated by a plain
 	 * "Oktoberfest" the same day, and this rule anchors on the Saturday — which
-	 * has been titled exactly "Oktoberfest" every year from 2023 to 2026. If a
-	 * Saturday ever carries only the long form, widen this to allow the club
-	 * name as a prefix.
+	 * has been titled exactly "Oktoberfest" every year from 2023 to 2026.
+	 *
+	 * DO NOT widen this to accept prefixes, suffixes or near-misses. The rule is
+	 * literally the single word and nothing else, by explicit decision. Variants
+	 * like "GASF O'Fest" and "Oktoberfest GASF" exist in the feeds and are
+	 * deliberately ignored; if a year's Saturday is ever titled something other
+	 * than "Oktoberfest", retitle the event rather than loosening this.
 	 *
 	 * Deliberately strict: "Oktoberfest 2027" would NOT match. If the event ever
 	 * gains a year suffix, loosen it here.
