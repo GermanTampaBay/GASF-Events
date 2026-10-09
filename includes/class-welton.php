@@ -173,11 +173,19 @@ final class Welton {
 	 * Exactly "Oktoberfest" and nothing else, once case and punctuation are
 	 * normalised away.
 	 *
-	 * A substring test would be wrong, and the calendar proves it — these are
-	 * real titles that must NOT trigger the override:
+	 * A substring test would be wrong, and the calendar proves it — this is a
+	 * real title that must NOT trigger the override:
 	 *
-	 *   "Are You Ready for Oktoberfest Dinner and Dance"
-	 *   "German American Society of Pinellas County Oktoberfest"   (another club)
+	 *   "Are You Ready for Oktoberfest Dinner and Dance"   (a teaser event)
+	 *
+	 * Also excluded, but harmlessly: "German American Society of Pinellas County
+	 * Oktoberfest". That one IS ours — a band created the Facebook event and
+	 * invited the club as co-organiser, so it arrived under the full legal name.
+	 * It only ever appears on FRIDAYS, always duplicated by a plain
+	 * "Oktoberfest" the same day, and this rule anchors on the Saturday — which
+	 * has been titled exactly "Oktoberfest" every year from 2023 to 2026. If a
+	 * Saturday ever carries only the long form, widen this to allow the club
+	 * name as a prefix.
 	 *
 	 * Deliberately strict: "Oktoberfest 2027" would NOT match. If the event ever
 	 * gains a year suffix, loosen it here.
