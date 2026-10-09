@@ -32,8 +32,18 @@ final class Welton {
 
 	private const LINK = '<a href="https://www.weltonbrewingcompany.com/" target="_blank" rel="noopener">Welton Brewing Co. &amp; Oyster Bar</a>';
 
+	/**
+	 * Oktoberfest override. During an Oktoberfest week the HOURS table above is
+	 * not trustworthy — Welton runs its own schedule around the festival — so
+	 * every blurb is replaced by a pointer to their site rather than a time we
+	 * would be guessing at.
+	 */
+	private const OKT_NOTE = 'Visit <a href="https://weltonbrewingcompany.com/" target="_blank" rel="noopener">weltonbrewingcompany.com</a> for their open hours during Oktoberfest.';
+
 	public function register_hooks(): void {
 		add_shortcode( 'gasf_welton_status', [ $this, 'shortcode' ] );
+		add_action( 'save_post_' . GASF_EVENTS_CPT, [ __CLASS__, 'flush_week_cache' ], 10, 1 );
+		add_action( 'before_delete_post', [ __CLASS__, 'flush_week_cache' ], 10, 1 );
 	}
 
 	/**
@@ -79,6 +89,14 @@ final class Welton {
 			return ''; // event already over
 		}
 
+		// Keyed on the EVENT's week, not today's: a December event viewed during
+		// Oktoberfest still gets the normal blurb. Checked before the HOURS lookup
+		// and the overlap test, because during Oktoberfest we cannot claim Welton
+		// is closed or that there is no overlap — we do not know their hours.
+		if ( self::is_oktoberfest_week( $start ) ) {
+			return '<div class="gasf-welton">' . self::OKT_NOTE . '</div>';
+		}
+
 		$today = self::HOURS[ (int) $start->format( 'N' ) ] ?? false;
 		if ( ! $today ) {
 			return ''; // Welton closed that day
@@ -101,7 +119,14 @@ final class Welton {
 
 	/** Generic "open now / opens at" message when there's no event context. */
 	private static function render_generic( \DateTimeZone $tz ): string {
-		$now   = new \DateTimeImmutable( 'now', $tz );
+		$now = new \DateTimeImmutable( 'now', $tz );
+		// Deliberately ahead of the HOURS lookup, so the note still appears on a
+		// Monday or Tuesday. Those days are "closed" in our table and normally
+		// render nothing — but during Oktoberfest that is exactly the assumption
+		// most likely to be wrong.
+		if ( self::is_oktoberfest_week( $now ) ) {
+			return '<div class="gasf-welton">' . self::OKT_NOTE . '</div>';
+		}
 		$today = self::HOURS[ (int) $now->format( 'N' ) ] ?? false;
 		if ( ! $today ) {
 			return '';
@@ -118,6 +143,120 @@ final class Welton {
 			$msg      = self::LINK . ' opens at ' . $open_str . ' today, right here on the property. Plan a visit!';
 		}
 		return '<div class="gasf-welton">' . $msg . '</div>';
+	}
+
+	/* ---- Oktoberfest week detection ---------------------------------- */
+
+	/**
+	 * Is the week containing $when a GASF Oktoberfest week?
+	 *
+	 * Weeks run Sunday → Saturday. The week counts when BOTH hold:
+	 *   - its Sunday falls in September or October, which keeps the rule inside
+	 *     the festival season so a stray listing in another month cannot
+	 *     silently rewrite the blurb; and
+	 *   - the Saturday of that week carries an event titled exactly Oktoberfest.
+	 *
+	 * The Saturday is the anchor because that is the day the festival always
+	 * runs, so the note goes up for the whole week leading to it.
+	 */
+	public static function is_oktoberfest_week( \DateTimeImmutable $when ): bool {
+		// 'w' is 0 for Sunday, so this walks back to the week's own Sunday.
+		$sunday = $when->modify( '-' . (int) $when->format( 'w' ) . ' days' );
+		$month  = (int) $sunday->format( 'n' );
+		if ( 9 !== $month && 10 !== $month ) {
+			return false;
+		}
+		return self::saturday_has_oktoberfest( $sunday->modify( '+6 days' ) );
+	}
+
+	/**
+	 * Exactly "Oktoberfest" and nothing else, once case and punctuation are
+	 * normalised away.
+	 *
+	 * A substring test would be wrong, and the calendar proves it — these are
+	 * real titles that must NOT trigger the override:
+	 *
+	 *   "Are You Ready for Oktoberfest Dinner and Dance"
+	 *   "German American Society of Pinellas County Oktoberfest"   (another club)
+	 *
+	 * Deliberately strict: "Oktoberfest 2027" would NOT match. If the event ever
+	 * gains a year suffix, loosen it here.
+	 */
+	public static function is_oktoberfest_title( string $title ): bool {
+		$t = wp_strip_all_tags( html_entity_decode( $title, ENT_QUOTES, 'UTF-8' ) );
+		$t = function_exists( 'mb_strtolower' ) ? mb_strtolower( $t, 'UTF-8' ) : strtolower( $t );
+		$t = trim( (string) preg_replace( '/[^a-z0-9]+/', ' ', $t ) );
+		return 'oktoberfest' === $t;
+	}
+
+	/**
+	 * Does $saturday carry a published, non-cancelled Oktoberfest?
+	 *
+	 * Cached per date because this runs on ordinary page loads. The transient is
+	 * cleared whenever an event is saved or deleted (see register_hooks), so a
+	 * retitled or cancelled festival takes effect at once rather than whenever
+	 * the cache happens to lapse.
+	 */
+	private static function saturday_has_oktoberfest( \DateTimeImmutable $saturday ): bool {
+		$key    = self::cache_key( $saturday );
+		$cached = get_transient( $key );
+		if ( false !== $cached ) {
+			return '1' === $cached;
+		}
+		$day  = $saturday->setTime( 0, 0 );
+		$next = $day->modify( '+1 day' );
+		$ids  = get_posts( [
+			'post_type'        => GASF_EVENTS_CPT,
+			'post_status'      => 'publish',
+			'numberposts'      => 50,
+			'fields'           => 'ids',
+			'no_found_rows'    => true,
+			'suppress_filters' => true,
+			'meta_query'       => [ [
+				'key'     => Meta::START_TS,
+				'type'    => 'NUMERIC',
+				'compare' => 'BETWEEN',
+				'value'   => [ $day->getTimestamp(), $next->getTimestamp() - 1 ],
+			] ],
+		] );
+		$found = false;
+		foreach ( $ids as $id ) {
+			if ( 'cancelled' === (string) get_post_meta( $id, Meta::STATUS, true ) ) {
+				continue; // a cancelled festival is not an Oktoberfest week
+			}
+			if ( self::is_oktoberfest_title( (string) get_the_title( $id ) ) ) {
+				$found = true;
+				break;
+			}
+		}
+		set_transient( $key, $found ? '1' : '0', 6 * HOUR_IN_SECONDS );
+		return $found;
+	}
+
+	private static function cache_key( \DateTimeImmutable $saturday ): string {
+		return 'gasf_welton_okt_' . $saturday->format( 'Ymd' );
+	}
+
+	/**
+	 * Drop the cached answer for the week an event belongs to, so renaming or
+	 * cancelling the festival is reflected on the next page load.
+	 */
+	public static function flush_week_cache( $post_id ): void {
+		if ( GASF_EVENTS_CPT !== get_post_type( $post_id ) ) {
+			return;
+		}
+		$start = (string) get_post_meta( $post_id, Meta::START, true );
+		if ( '' === $start ) {
+			return;
+		}
+		try {
+			$d = new \DateTimeImmutable( $start, wp_timezone() );
+		} catch ( \Exception $e ) {
+			return;
+		}
+		// Forward to that week's Saturday, which is what the cache is keyed on.
+		$saturday = $d->modify( '+' . ( 6 - (int) $d->format( 'w' ) ) . ' days' );
+		delete_transient( self::cache_key( $saturday ) );
 	}
 
 	private static function open_now( \DateTimeImmutable $now ): bool {

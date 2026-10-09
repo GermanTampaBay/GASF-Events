@@ -3,7 +3,7 @@
  * Plugin Name:       GASF Events
  * Plugin URI:        https://github.com/GermanTampaBay/GASF-Events
  * Description:       Lean, native events for the German American Society — replaces Modern Events Calendar. Owns event data, display, Facebook import, Eventbrite/Google syndication, public feeds, and the home-page hero banners.
- * Version:           0.29.2
+ * Version:           0.30.0
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            flinchbot
