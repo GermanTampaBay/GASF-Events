@@ -2,11 +2,14 @@
 /**
  * Event JSON-LD (schema.org/Event) for Google rich results.
  *
- * Single source of event structured data. Integrates into Yoast's @graph when
- * Yoast is active (so the Event node links to the WebPage/Organization nodes
- * and we avoid duplicate emission); falls back to a standalone <script> block
- * when Yoast is absent. Always carries organizer (name+url), image (cover →
- * default), offers (when priced), and eventStatus. See docs/ARCHITECTURE.md §5.7.
+ * Single source of event structured data, emitted as a standalone <script>
+ * block on single event pages. Always carries organizer (name+url), image
+ * (cover → default), offers (when priced), and eventStatus.
+ * See docs/ARCHITECTURE.md §5.7.
+ *
+ * NOTE: there is no SEO plugin on this site, so this block is the only thing
+ * producing Event structured data. If one is ever installed, check it is not
+ * also emitting an Event node for these pages — two would compete.
  *
  * @package GASF_Events
  */
@@ -18,26 +21,13 @@ defined( 'ABSPATH' ) || exit;
 final class Schema {
 
 	public function register_hooks(): void {
-		add_filter( 'wpseo_schema_graph', [ $this, 'add_to_yoast_graph' ], 11, 2 );
-		add_action( 'wp_footer', [ $this, 'fallback' ] );
+		add_action( 'wp_footer', [ $this, 'render' ] );
 	}
 
-	/** Inject the Event node into Yoast's graph on single event pages. */
-	public function add_to_yoast_graph( $graph, $context ) {
-		if ( ! is_array( $graph ) || ! is_singular( GASF_EVENTS_CPT ) ) {
-			return $graph;
-		}
-		$event = Event::get( get_queried_object_id() );
-		if ( $event ) {
-			$graph[] = self::node( $event );
-		}
-		return $graph;
-	}
-
-	/** Standalone JSON-LD when Yoast isn't present. */
-	public function fallback(): void {
-		if ( defined( 'WPSEO_VERSION' ) || ! is_singular( GASF_EVENTS_CPT ) ) {
-			return; // Yoast handles it, or not an event page.
+	/** The Event JSON-LD for a single event page. */
+	public function render(): void {
+		if ( ! is_singular( GASF_EVENTS_CPT ) ) {
+			return;
 		}
 		$event = Event::get( get_queried_object_id() );
 		if ( ! $event ) {

@@ -74,7 +74,7 @@ So GASF Events must ship **four front-end renderers**: month grid, upcoming list
 | Component | Role | Disposition |
 |---|---|---|
 | `templates/single-mec-events.php` (Module G) | Branded single-event page | **PORT** to native single template, read `_gasf_*` |
-| `05-yoast-mec-schema.php` | JSON-LD Event schema injector | **PORT** into plugin, build schema from `_gasf_*` |
+| `05-yoast-mec-schema.php` *(legacy filename)* | JSON-LD Event schema injector | **PORT** into plugin, build schema from `_gasf_*` |
 | `16-feierabend-dates.php` → `[mec_upcoming_dates]` | Euchre/Crafting upcoming lists | **REPOINT** |
 | `german-dinner-events.php` → `[german_dinner_events]` | Dinner Night list | **REPOINT** |
 | `24-bayern-match-events.php` → `[bayern_match_events]` | Next 5 Bayern matches | **REPOINT** |
@@ -295,11 +295,11 @@ Each `gasf_event` is its own URL (`/events/<slug>/`, preserved through migration
 
 > **Non-negotiable (per requirement):** every Event block carries **organizer name, organizer URL, an image (cover or default), offers (when priced), and eventStatus**. These are wired from the settings in §4.3 + `_gasf_*` so they're present on all 860+ events, not just hand-made ones.
 
-**Integrate into Yoast's schema `@graph`** via the `wpseo_schema_graph` filter rather than emitting a standalone block — the Event node links cleanly to Yoast's WebPage/Organization nodes and we avoid duplicate Organization/WebPage emission. (Cleaner than module 05's current buffer-patch + footer-inject approach.)
+**Emit a standalone JSON-LD block** on each event page, in `wp_footer`. There is no SEO plugin on this site, so this is the only source of Event structured data — if one is ever installed, check it is not also emitting an Event node for these pages, because two would compete. (Cleaner than module 05's current buffer-patch + footer-inject approach.)
 
-**Standard per-page meta (via Yoast, already installed):** unique `<title>` + meta description per event, canonical URL, **Open Graph** (`og:title/description/image=cover/url`, `og:type`) — important because these events get reshared to the same Facebook they came from — and **Twitter Card** tags.
+**Standard per-page meta (from the theme):** unique `<title>` + meta description per event, canonical URL, **Open Graph** (`og:title/description/image=cover/url`, `og:type`) — important because these events get reshared to the same Facebook they came from — and **Twitter Card** tags.
 
-**Crawlability:** CPT registered `public` + `show_in_rest` so events appear in the Yoast **XML sitemap**; Yoast breadcrumbs (Events › Event name). **Past events stay indexable** (part of the club's 70-year history; Google auto-drops past events from rich results anyway).
+**Crawlability:** CPT registered `public` + `show_in_rest` so events appear in WordPress core's **XML sitemap**. **Past events stay indexable** (part of the club's 70-year history; Google auto-drops past events from rich results anyway).
 
 **Validation gate:** Google Rich Results Test pre-launch + the Search Console "Events" enhancement report monitored post-cutover.
 
@@ -390,7 +390,7 @@ This makes the kiosk's event sync — and any external subscriber — a first-cl
 5. Soak 48–72h with FB sync monitored; then decommission (§9).
 
 ### 8.2 URL / SEO preservation
-Slugs unchanged + same `/events/` base → existing URLs and Yoast/Google indexing preserved. Add belt-and-suspenders 301s only if any slug must change (none expected).
+Slugs unchanged + same `/events/` base → existing URLs and Google indexing preserved. Add belt-and-suspenders 301s only if any slug must change (none expected).
 
 ### 8.3 Trash handling
 The 8 trashed `mec-events` (some are the known trash-limbo artifacts) are reviewed during migration: real-but-stuck events restored as drafts; genuine junk purged. Native dedup prevents recurrence of the limbo bug.
@@ -417,7 +417,7 @@ The 8 trashed `mec-events` (some are the known trash-limbo artifacts) are review
 | DST correctness in date migration | MED | `wp_timezone()` throughout; validate spring/fall boundary events |
 | Signage page flicker during cutover | MED | Cut over signage shortcode last; long cache; pre-warm |
 | 860-event conversion errors | MED | Dry-run + idempotent script + parallel-run validation before in-place convert |
-| Yoast / schema duplication | LOW | Single schema injector (ours); ensure MEC native schema stays off |
+| Schema duplication | LOW | Single schema injector (ours); ensure MEC native schema stays off. No SEO plugin is installed — if one is added, check it does not also emit an Event node |
 | Event-table growth (keep-all + hourly FB) → thousands over years | MED | Index `_gasf_start_ts`; date-bound all grid/list queries; cache views |
 | Kiosk Phase 3 not yet built | LOW (opportunity) | Define + freeze REST/iCal JSON contract now so kiosk consumes it cleanly |
 
@@ -428,7 +428,7 @@ The 8 trashed `mec-events` (some are the known trash-limbo artifacts) are review
 - **Visitor add-to-calendar:** native helper — Google, Outlook.com, Office 365, Apple/.ics, Yahoo, universal .ics; QR variant on the kiosk (§5.6).
 - **Admin editor:** maintainer-friendly add/edit/delete meta box; manual events shielded from FB sync via `_gasf_source` (§4.5–4.6).
 - **Sync pin:** **whole-event** for v1 (`_gasf_sync_locked`) + auto-pin-on-edit + deletion exemption; automatic per-field dirty-tracking reserved as a no-migration v2 (§4.6).
-- **Per-event SEO:** unique page each; Event JSON-LD via Yoast `@graph` **always carrying organizer name+URL, image (cover→default), offers (when priced), eventStatus**; OG/Twitter/canonical/sitemap; past events stay indexable (§5.7).
+- **Per-event SEO:** unique page each; Event JSON-LD **always carrying organizer name+URL, image (cover→default), offers (when priced), eventStatus**; OG/Twitter/canonical/sitemap; past events stay indexable (§5.7).
 - **Recurring events:** first-class **flat-but-grouped series** (`_gasf_series_id`) with a "Repeats" generator + series-level edit/delete; FB recurrence uses the same mechanism (§4.7).
 - **Default image:** site-wide fallback cover (`gasf_events_default_image`) used in display **and** schema so no event is image-less (§4.3).
 - **Organizer:** global setting (name + URL) with per-event override (§4.3).
