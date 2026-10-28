@@ -14,7 +14,16 @@ defined( 'ABSPATH' ) || exit;
 
 final class FB_Client {
 
-	const API = 'https://graph.facebook.com/v19.0/';
+	/**
+	 * Pinned Graph API version. Meta retires each version about two years
+	 * after release and serves calls to a retired one from the oldest version
+	 * still live, so a stale pin keeps "working" while the fields underneath
+	 * follow whatever version Meta chose. v19.0 (pinned through v0.33.x)
+	 * expired 2026-05-21. v25.0 was released 2026-02-18; its own end date is
+	 * on https://developers.facebook.com/docs/graph-api/changelog/versions/ —
+	 * bump this before that date, not after the sync starts misbehaving.
+	 */
+	const API = 'https://graph.facebook.com/v25.0/';
 
 	/**
 	 * Fetch upcoming events for one account.

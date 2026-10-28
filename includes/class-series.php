@@ -29,6 +29,44 @@ final class Series {
 		add_filter( 'post_row_actions', [ $this, 'row_actions' ], 10, 2 );
 		add_action( 'admin_post_gasf_delete_series', [ $this, 'handle_delete_series' ] );
 		add_action( 'admin_notices', [ $this, 'deleted_notice' ] );
+		add_action( 'transition_post_status', [ $this, 'on_master_status' ], 10, 3 );
+	}
+
+	/**
+	 * Occurrences follow the master between draft and published.
+	 *
+	 * They only ever inherited the master's status at creation
+	 * (create_occurrence), so a series built as a draft and published later
+	 * left every generated date a draft, and nothing on screen said so. Only
+	 * the draft/pending/publish edges are mirrored, and only onto occurrences
+	 * that have not started: trashing is the "Delete series" action's job, and
+	 * unpublishing a master must not rewrite the history of dates already gone.
+	 *
+	 * @param string   $new  New post status.
+	 * @param string   $old  Previous post status.
+	 * @param \WP_Post $post The post.
+	 */
+	public function on_master_status( string $new, string $old, $post ): void {
+		if ( $new === $old || self::$generating || ! $post instanceof \WP_Post || GASF_EVENTS_CPT !== $post->post_type ) {
+			return;
+		}
+		$mirrored = [ 'publish', 'draft', 'pending' ];
+		if ( ! in_array( $new, $mirrored, true ) || ! in_array( $old, array_merge( $mirrored, [ 'auto-draft', 'new', 'future' ] ), true ) ) {
+			return;
+		}
+		if ( 'master' !== (string) get_post_meta( $post->ID, Meta::SERIES_ROLE, true ) ) {
+			return;
+		}
+		$series_id = (string) get_post_meta( $post->ID, Meta::SERIES_ID, true );
+		$now       = time();
+		self::$generating = true;
+		foreach ( self::members( $series_id, 'occurrence' ) as $occ_id ) {
+			if ( get_post_status( $occ_id ) === $new || (int) get_post_meta( $occ_id, Meta::START_TS, true ) < $now ) {
+				continue;
+			}
+			wp_update_post( [ 'ID' => $occ_id, 'post_status' => $new ] );
+		}
+		self::$generating = false;
 	}
 
 	public function deleted_notice(): void {
@@ -130,6 +168,8 @@ final class Series {
 			'ID'           => $occ_id,
 			'post_title'   => $master->post_title,
 			'post_content' => $master->post_content,
+			// "Apply to future" means the master's state too, not just its text.
+			'post_status'  => $master->post_status,
 		] );
 		self::write_dates( $occ_id, $occ_start, $duration );
 		self::copy_content_meta( $master->ID, $occ_id );

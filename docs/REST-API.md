@@ -238,7 +238,8 @@ anyone touching them.
   "since":   "2026-08-01T12:00:00+00:00",
   "now":     "2026-08-29T18:30:00+00:00",
   "updated": [ { "id": 16275, "title": "Biergarten", "…": "…" } ],
-  "removed": [ 16111, 16240 ]
+  "removed": [ 16111, 16240 ],
+  "truncated": false
 }
 ```
 
@@ -246,7 +247,7 @@ anyone touching them.
 |---|---|---|
 | `since` | *(required)* | Same date formats as `from`. Missing or unparseable is a `400`. |
 | `fields` | *(all)* | Applies to `updated` only, same rules as elsewhere. |
-| `limit` | `500` | 1–500, applied to `updated` and `removed` separately. |
+| `limit` | `500` | 1–500, applied to `updated` and `removed` separately. When either list fills up, `truncated` is `true` and `now` steps back to the last item's own modified time instead of the current time, so nothing past the cap is lost — poll again right away. |
 
 - **`updated`** — full event objects, published, modified after `since`, ordered
   **oldest-modified first** so a consumer that stops halfway can resume from the
@@ -256,6 +257,15 @@ anyone touching them.
   an event you are being told to forget has no useful payload.
 - **`now`** — the checkpoint for your next call. Store it and pass it back as
   `since`; do not use your own clock, which may not agree with the server's.
+  It is taken before the lookup runs, and on a truncated page it is the
+  modified time of the last item returned, so it can be earlier than the
+  moment you received the response. That is deliberate.
+- **`truncated`** — `true` when a list hit `limit`. Treat it as "there is more":
+  call again immediately with the returned `now`.
+- **Delivery is at-least-once.** `since` is inclusive, so an event modified in
+  the exact second of a checkpoint can appear in two consecutive responses.
+  Key your cache on `id` and a repeat costs nothing; the alternative was
+  occasionally missing one, which cannot be recovered from.
 
 Deletions are remembered for **90 days**. A consumer that goes quiet for longer
 than that should do a full `/events` read rather than trusting a delta.

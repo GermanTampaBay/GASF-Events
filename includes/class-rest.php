@@ -397,6 +397,11 @@ final class Rest {
 		$has_limit = null !== $req['limit'] && '' !== (string) $req['limit'];
 		$limit     = $has_limit ? min( 500, max( 1, (int) $req['limit'] ) ) : 500;
 
+		// The checkpoint is taken BEFORE the queries run. Taken afterwards, an
+		// event modified while they ran sat between the two and was never
+		// reported: the consumer's next `since` had already moved past it.
+		$now = time();
+
 		$common = [
 			'post_type'           => GASF_EVENTS_CPT,
 			'posts_per_page'      => $limit,
@@ -404,10 +409,15 @@ final class Rest {
 			'order'               => 'ASC',
 			'no_found_rows'       => true,
 			'ignore_sticky_posts' => true,
+			// Inclusive, because a truncated page hands back the last item's own
+			// modified time as the checkpoint (below): anything else modified in
+			// that same second must be picked up by the next poll, even at the
+			// cost of repeating the item itself. Delivery is at-least-once;
+			// consumers key on id, so a repeat is harmless and a gap is not.
 			'date_query'          => [ [
 				'column'    => 'post_modified_gmt',
 				'after'     => gmdate( 'Y-m-d H:i:s', $since ),
-				'inclusive' => false,
+				'inclusive' => true,
 			] ],
 		];
 
@@ -422,19 +432,39 @@ final class Rest {
 			'fields'      => 'ids',
 		] );
 
+		// A full page may have more behind it. The old response said nothing and
+		// still advanced `now`, so a feed run or migration that touched more than
+		// $limit events lost everything past the cap for good. When either list
+		// is full, the checkpoint becomes the oldest last-item time instead, so
+		// the next poll resumes there; `truncated` tells the consumer to poll
+		// again straight away rather than wait for its usual interval.
+		$truncated = false;
+		foreach ( [ $updated->posts, $gone->posts ] as $list ) {
+			if ( count( $list ) >= $limit ) {
+				$truncated = true;
+				$last_ts   = (int) get_post_modified_time( 'U', true, end( $list ) );
+				// If the whole page sits inside the checkpoint's own second, handing
+				// that second back again would return the same page forever. Step
+				// past it instead. More than $limit events modified within one
+				// second is now the only way to lose one, and limit goes up to 500.
+				$now = min( $now, $last_ts > $since ? $last_ts : $since + 1 );
+			}
+		}
+
 		$removed = array_map( 'intval', $gone->posts );
 		foreach ( (array) get_option( self::TOMBSTONES, [] ) as $id => $ts ) {
-			if ( (int) $ts > $since ) {
+			if ( (int) $ts >= $since ) {
 				$removed[] = (int) $id;
 			}
 		}
 		$removed = array_values( array_unique( $removed ) );
 
 		$resp = new \WP_REST_Response( [
-			'since'   => gmdate( 'c', $since ),
-			'now'     => gmdate( 'c' ),
-			'updated' => array_map( fn( $p ) => $this->to_json( new Event( $p ), $fields ), $updated->posts ),
-			'removed' => $removed,
+			'since'     => gmdate( 'c', $since ),
+			'now'       => gmdate( 'c', $now ),
+			'updated'   => array_map( fn( $p ) => $this->to_json( new Event( $p ), $fields ), $updated->posts ),
+			'removed'   => $removed,
+			'truncated' => $truncated,
 		] );
 		$resp->header( 'X-GASF-Count', (string) count( $updated->posts ) );
 		$resp->header( 'X-GASF-Removed', (string) count( $removed ) );

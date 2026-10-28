@@ -14,6 +14,10 @@ final class Meta_Box {
 
 	const NONCE = 'gasf_events_details_nonce';
 
+	/** Assumed length of an event saved with no end at all (minutes). heroes.php
+	 * already assumes two hours for a feed event with no real end. */
+	const DEFAULT_DURATION_MIN = 120;
+
 	public function register_hooks(): void {
 		add_action( 'add_meta_boxes', [ $this, 'add' ] );
 		add_action( 'save_post_' . GASF_EVENTS_CPT, [ $this, 'save' ], 10, 2 );
@@ -89,6 +93,13 @@ final class Meta_Box {
 					<input type="time" class="gasf-time" name="gasf_end_time" value="<?php echo esc_attr( $end_time ); ?>">
 				</span>
 			</div>
+			<p class="description" style="margin:4px 0 0;"><?php
+				printf(
+					/* translators: %d: default duration in hours */
+					esc_html__( 'Leave the end blank for a %d-hour event. Google hours and Eventbrite both need a real end time.', 'gasf-events' ),
+					(int) ( self::DEFAULT_DURATION_MIN / 60 )
+				);
+			?></p>
 
 			<label class="row" for="gasf_status"><?php esc_html_e( 'Status', 'gasf-events' ); ?></label>
 			<select name="gasf_status" id="gasf_status">
@@ -239,17 +250,27 @@ final class Meta_Box {
 		$all_day = ! empty( $_POST['gasf_all_day'] );
 
 		$start_date = sanitize_text_field( wp_unslash( $_POST['gasf_start_date'] ?? '' ) );
-		$start_time = $all_day ? '00:00' : sanitize_text_field( wp_unslash( $_POST['gasf_start_time'] ?? '00:00' ) );
+		$start_time = $all_day ? '00:00' : sanitize_text_field( wp_unslash( $_POST['gasf_start_time'] ?? '' ) );
 		$end_date   = sanitize_text_field( wp_unslash( $_POST['gasf_end_date'] ?? '' ) );
-		$end_time   = $all_day ? '23:59' : sanitize_text_field( wp_unslash( $_POST['gasf_end_time'] ?? '' ) );
+		$end_time   = $all_day ? '' : sanitize_text_field( wp_unslash( $_POST['gasf_end_time'] ?? '' ) );
 
-		if ( ! $end_date && $start_date ) {
-			$end_date = $start_date;
-			$end_time = $all_day ? '23:59' : ( $end_time ?: $start_time );
+		$start = $start_date ? $start_date . ' ' . ( $start_time ?: '00:00' ) . ':00' : '';
+		if ( '' === $start ) {
+			$end = '';
+		} elseif ( $all_day ) {
+			$end = ( $end_date ?: $start_date ) . ' 23:59:00';
+		} elseif ( $end_date && $end_time ) {
+			$end = $end_date . ' ' . $end_time . ':00';
+		} elseif ( $end_date ) {
+			// A date without a time: the same clock time as the start, that day.
+			$end = $end_date . ' ' . ( $start_time ?: '00:00' ) . ':00';
+		} else {
+			// Nothing at all: a default duration rather than a zero-length event.
+			// end == start used to be stored here, which the Business Profile hours
+			// sync skips, Eventbrite rejects, and .ics shows as a 0-minute event.
+			$s   = Meta::to_datetime( $start );
+			$end = $s ? $s->modify( '+' . self::DEFAULT_DURATION_MIN . ' minutes' )->format( 'Y-m-d H:i:s' ) : $start;
 		}
-
-		$start = $start_date ? trim( $start_date . ' ' . ( $start_time ?: '00:00' ) . ':00' ) : '';
-		$end   = $end_date ? trim( $end_date . ' ' . ( $end_time ?: '00:00' ) . ':00' ) : '';
 
 		// Guard: end must be >= start.
 		if ( $start && $end && Meta::local_to_ts( $end ) < Meta::local_to_ts( $start ) ) {

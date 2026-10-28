@@ -10,8 +10,12 @@ on something outside the repo (host config, live data) that could not be checked
 Severity: **P1** = breaks something visible or corrupts data; **P2** = wrong under
 realistic conditions; **P3** = cleanup / hardening / drift.
 
-**Status:** P1-1, P1-2 and P1-3 are fixed in v0.33.2 (same branch as this document).
-Everything from P2-1 down is still open.
+**Status:** P1-1 to P1-3 are fixed in v0.33.2 and P2-1 to P2-5 in v0.34.0 (same branch
+as this document). P2-1 is fixed only for status: occurrences now follow the master
+between draft and published. Removing future occurrences when a rule shrinks or the
+master's weekday changes was deliberately **not** done, because an occurrence a
+maintainer moved to a different date by hand is indistinguishable from one the rule
+no longer produces, and trashing it would destroy that edit. The P3 list is still open.
 
 ---
 

@@ -24,6 +24,24 @@ final class Post_Type {
 		add_action( 'init', [ $this, 'register_post_type' ] );
 		add_action( 'init', [ Meta::class, 'register' ] );
 		add_action( 'admin_init', [ $this, 'maybe_grant_caps' ] );
+		add_action( 'pre_get_posts', [ $this, 'archive_query' ] );
+	}
+
+	/**
+	 * The /<slug>/ archive is a list of events, not a blog: soonest first and
+	 * only what has not finished yet. Without this the theme's archive.php
+	 * ordered it by publish date with every past event included, and the
+	 * single page's "All events" link led straight there. Feeds are left
+	 * alone: an RSS reader wants newest-published first.
+	 */
+	public function archive_query( \WP_Query $q ): void {
+		if ( is_admin() || $q->is_feed() || ! $q->is_main_query() || ! $q->is_post_type_archive( GASF_EVENTS_CPT ) ) {
+			return;
+		}
+		$q->set( 'meta_key', Meta::START_TS );
+		$q->set( 'orderby', 'meta_value_num' );
+		$q->set( 'order', 'ASC' );
+		$q->set( 'meta_query', [ [ 'key' => Meta::END_TS, 'value' => time(), 'type' => 'NUMERIC', 'compare' => '>=' ] ] );
 	}
 
 	/**

@@ -127,7 +127,13 @@ final class Eventbrite_Destination implements Publish_Destination {
 	private function build_body( Event $event ): array {
 		$tz        = wp_timezone_string();
 		$start     = $event->start();
-		$end       = $event->end() ?: $start;
+		$end       = $event->end();
+		// Eventbrite requires end > start. Feed events often arrive with no end
+		// (stored as end == start), and that used to be sent as-is, so every one
+		// of them landed in the error column. Give it a default length instead.
+		if ( $start && ( ! $end || $end <= $start ) ) {
+			$end = $start->modify( '+2 hours' );
+		}
 		$utc       = static fn( ?\DateTimeImmutable $d ) => $d ? $d->setTimezone( new \DateTimeZone( 'UTC' ) )->format( 'Y-m-d\TH:i:s\Z' ) : '';
 		$summary   = mb_substr( trim( wp_strip_all_tags( $event->description() ) ), 0, 140 );
 
