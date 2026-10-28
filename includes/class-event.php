@@ -338,6 +338,36 @@ final class Event {
 		return (string) $this->meta( Meta::TV_CHANNEL );
 	}
 
+	/* ---- Promotion (road sign / home page) ----------------------------- */
+
+	/** Offered to the road sign and home page. */
+	public function is_featured(): bool {
+		return (bool) $this->meta( Meta::FEATURED );
+	}
+
+	/** Ordering weight among featured events, 0–100, higher first. */
+	public function priority(): int {
+		return max( 0, min( 100, (int) $this->meta( Meta::PRIORITY ) ) );
+	}
+
+	/**
+	 * The headline for a sign slide. Falls back to the full title so a consumer
+	 * always has something to show; is_short_title_set() tells the two apart.
+	 */
+	public function short_title(): string {
+		$s = (string) $this->meta( Meta::SHORT_TITLE );
+		return '' !== $s ? $s : $this->title();
+	}
+
+	public function is_short_title_set(): bool {
+		return '' !== (string) $this->meta( Meta::SHORT_TITLE );
+	}
+
+	/** The line under the headline on a sign slide ('' = none set). */
+	public function sign_text(): string {
+		return (string) $this->meta( Meta::SIGN_TEXT );
+	}
+
 	/* ---- Syndication / stats ------------------------------------------ */
 
 	/** Per-destination publish state: [ '<dest>' => {id,url,status,synced_at,error} ]. */

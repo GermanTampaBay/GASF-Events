@@ -72,6 +72,7 @@ final class Plugin {
 		require_once $dir . 'class-seo.php';
 		require_once $dir . 'class-cache.php';
 		require_once $dir . 'class-health.php';
+		require_once $dir . 'class-webhooks.php';
 		if ( is_admin() ) {
 			require_once $dir . 'class-meta-box.php';
 			require_once $dir . 'class-admin-list.php';
@@ -115,6 +116,7 @@ final class Plugin {
 		( new Seo() )->register_hooks();
 		( new Cache() )->register_hooks();
 		( new Health() )->register_hooks();
+		( new Webhooks() )->register_hooks();
 
 		if ( is_admin() ) {
 			( new Meta_Box() )->register_hooks();
@@ -155,6 +157,7 @@ final class Plugin {
 		wp_clear_scheduled_hook( 'gasf_hero_recurring_cron' );  // owned by recurring-heroes.php
 		wp_clear_scheduled_hook( 'gasf_hero_activate_event' );  // one-off purges, heroes.php
 		wp_clear_scheduled_hook( 'gasf_events_heartbeat' );     // Health::CRON_HOOK
+		wp_clear_scheduled_hook( 'gasf_events_webhook_retry' ); // Webhooks::RETRY_HOOK
 		flush_rewrite_rules();
 	}
 }

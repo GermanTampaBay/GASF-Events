@@ -189,6 +189,7 @@ final class Series {
 			Meta::ALL_DAY, Meta::HIDE_TIME, Meta::HIDE_END, Meta::STATUS, Meta::STATUS_REASON,
 			Meta::ONLINE_LINK, Meta::MORE_INFO_URL, Meta::MORE_INFO_TITLE, Meta::COST,
 			Meta::VENUE_OVERRIDE, Meta::ORGANIZER_OVERRIDE, Meta::SOURCE,
+			Meta::FEATURED, Meta::PRIORITY, Meta::SHORT_TITLE, Meta::SIGN_TEXT,
 		];
 		foreach ( $keys as $k ) {
 			$v = get_post_meta( $from, $k, true );

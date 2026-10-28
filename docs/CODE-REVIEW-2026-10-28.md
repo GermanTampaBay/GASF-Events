@@ -27,7 +27,9 @@ run (the old single post is drafted by the normal miss-prune after two runs).
 Of the feature list in §3, items 1 (Open Graph / meta description), 2 (page-cache purge,
 and the `ETag`/304 conditional GET from §2) and the health screen with a cron heartbeat
 were built in v0.36.0 — see `includes/class-seo.php`, `class-cache.php`, `class-health.php`
-and ARCHITECTURE §5.7 and §10 (questions 4 and 5).
+and ARCHITECTURE §5.7 and §10 (questions 4 and 5). Items 3 (webhooks, `class-webhooks.php`)
+and 4 (the display and promotion fields and filters in §2 above) were built in v0.37.0 —
+see ARCHITECTURE §7 and REST-API.md.
 
 ---
 

@@ -47,7 +47,18 @@ final class Rest {
 		'id', 'title', 'slug', 'url', 'start', 'end', 'all_day', 'status',
 		'image', 'description', 'organizer', 'venue', 'series_id', 'source', 'modified',
 		'tv_input', 'tv_channel',
+		// v0.37.0 — display-oriented fields so the kiosk and road sign can render
+		// what the site renders. Appended, never reordered (frozen contract).
+		'hide_time', 'hide_end', 'status_reason', 'online_link', 'more_info_url', 'more_info_title',
+		'cost', 'is_multiday', 'icon', 'color', 'has_cover', 'images',
+		'featured', 'priority', 'short_title', 'sign_text',
 	];
+
+	/** Statuses `?status=` accepts; `scheduled` is the stored empty string. */
+	const STATUS_NAMES = [ 'scheduled', 'cancelled', 'postponed', 'sold_out', 'online_only' ];
+
+	/** Image sizes carried by the `images` field, smallest first. */
+	const IMAGE_SIZES = [ 'thumbnail', 'medium', 'large', 'full' ];
 
 	/**
 	 * Named `?event=` shortcuts. Each resolves to the title text configured in
@@ -151,6 +162,10 @@ final class Rest {
 				'order'         => [ 'default' => 'asc', 'sanitize_callback' => 'sanitize_text_field' ],
 				'fields'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
 				'updated_since' => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'status'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'featured'      => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'source'        => [ 'sanitize_callback' => 'sanitize_key' ],
+				'series_id'     => [ 'sanitize_callback' => 'sanitize_text_field' ],
 			],
 			'callback'            => [ $this, 'events' ],
 		] );
@@ -189,6 +204,10 @@ final class Rest {
 				'order'         => [ 'default' => 'asc', 'sanitize_callback' => 'sanitize_text_field' ],
 				'fields'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
 				'updated_since' => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'status'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'featured'      => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'source'        => [ 'sanitize_callback' => 'sanitize_key' ],
+				'series_id'     => [ 'sanitize_callback' => 'sanitize_text_field' ],
 			],
 			'callback'            => [ $this, 'range' ],
 		] );
@@ -378,6 +397,14 @@ final class Rest {
 		} else {
 			// Default: upcoming.
 			$meta_query[] = [ 'key' => Meta::END_TS, 'value' => time(), 'type' => 'NUMERIC', 'compare' => '>=' ];
+		}
+
+		$filters = self::resolve_filters( $req );
+		if ( is_wp_error( $filters ) ) {
+			return $filters;
+		}
+		foreach ( $filters as $clause ) {
+			$meta_query[] = $clause;
 		}
 
 		$args = [
@@ -655,8 +682,139 @@ final class Rest {
 				return $e->tv_input();
 			case 'tv_channel':
 				return $e->tv_channel();
+			// Display fields (v0.37.0): what the site honours when rendering.
+			case 'hide_time':
+				return $e->hide_time();
+			case 'hide_end':
+				return $e->hide_end();
+			case 'status_reason':
+				return $e->status_reason();
+			case 'online_link':
+				return $e->online_link();
+			case 'more_info_url':
+				return $e->more_info_url();
+			case 'more_info_title':
+				// Only meaningful next to a URL; the model's label fallback
+				// ("More info") would otherwise appear on every event.
+				return '' !== $e->more_info_url() ? $e->more_info_title() : '';
+			case 'cost':
+				return $e->cost();
+			case 'is_multiday':
+				return $e->is_multiday();
+			case 'icon':
+				return $e->icon();
+			case 'color':
+				return $e->color();
+			case 'has_cover':
+				return has_post_thumbnail( $e->post() );
+			case 'images':
+				return self::images( $e );
+			// Promotion fields, set per event under "Road sign & promotion".
+			case 'featured':
+				return $e->is_featured();
+			case 'priority':
+				return $e->priority();
+			case 'short_title':
+				return $e->short_title();
+			case 'sign_text':
+				return $e->sign_text();
 		}
 		return null; // unreachable: resolve_fields() rejects unknown names
+	}
+
+	/**
+	 * Every registered size of the cover (or the default image) with its
+	 * pixel dimensions, so a 1080p sign can ask for `full` and a card grid for
+	 * `medium` instead of guessing from one `large` URL. When only the bundled
+	 * SVG placeholder is available the dimensions are 0 — pair with has_cover.
+	 *
+	 * @return array<string,array{url:string,width:int,height:int}>
+	 */
+	private static function images( Event $e ): array {
+		$id  = has_post_thumbnail( $e->post() ) ? (int) get_post_thumbnail_id( $e->post() ) : Settings::default_image_id();
+		$out = [];
+		foreach ( self::IMAGE_SIZES as $size ) {
+			$src = $id ? wp_get_attachment_image_src( $id, $size ) : false;
+			$out[ $size ] = $src
+				? [ 'url' => (string) $src[0], 'width' => (int) $src[1], 'height' => (int) $src[2] ]
+				: [ 'url' => Settings::default_image_url( $size ), 'width' => 0, 'height' => 0 ];
+		}
+		return $out;
+	}
+
+	/**
+	 * Optional narrowing filters shared by /events and /events/{x-y}:
+	 *
+	 *   status=cancelled,postponed   only these
+	 *   status=-cancelled            everything but these (same either/or rule as fields)
+	 *   featured=1 | 0
+	 *   source=facebook | ics | manual
+	 *   series_id=<id>
+	 *
+	 * Returned as meta_query clauses, or a WP_Error naming the bad value.
+	 *
+	 * @return array|\WP_Error
+	 */
+	private static function resolve_filters( \WP_REST_Request $req ) {
+		$clauses = [];
+
+		$status = trim( (string) $req['status'] );
+		if ( '' !== $status ) {
+			$names   = array_values( array_filter( array_map( 'trim', explode( ',', $status ) ), 'strlen' ) );
+			$negated = array_filter( $names, static fn( $n ) => str_starts_with( $n, '-' ) );
+			if ( $negated && count( $negated ) !== count( $names ) ) {
+				return new \WP_Error( 'gasf_status_mixed', __( 'The status parameter takes either a list to include or a list of -excluded names, not both.', 'gasf-events' ), [ 'status' => 400 ] );
+			}
+			$clean   = array_map( static fn( $n ) => ltrim( $n, '-' ), $names );
+			$unknown = array_values( array_diff( $clean, self::STATUS_NAMES ) );
+			if ( $unknown ) {
+				return new \WP_Error(
+					'gasf_status_unknown',
+					sprintf( /* translators: 1: unknown names, 2: valid names */ __( 'Unknown status: %1$s. Valid: %2$s.', 'gasf-events' ), implode( ', ', $unknown ), implode( ', ', self::STATUS_NAMES ) ),
+					[ 'status' => 400, 'unknown' => $unknown, 'available' => self::STATUS_NAMES ]
+				);
+			}
+			$include = $negated ? array_values( array_diff( self::STATUS_NAMES, $clean ) ) : $clean;
+			$or      = [ 'relation' => 'OR' ];
+			if ( in_array( 'scheduled', $include, true ) ) {
+				// Scheduled is stored as '' and, on older rows, not stored at all.
+				$or[] = [ 'key' => Meta::STATUS, 'compare' => 'NOT EXISTS' ];
+				$or[] = [ 'key' => Meta::STATUS, 'value' => '' ];
+			}
+			$named = array_values( array_diff( $include, [ 'scheduled' ] ) );
+			if ( $named ) {
+				$or[] = [ 'key' => Meta::STATUS, 'value' => $named, 'compare' => 'IN' ];
+			}
+			if ( count( $or ) < 2 ) {
+				$or[] = [ 'key' => Meta::STATUS, 'value' => '__none__' ]; // excluded everything: match nothing, honestly
+			}
+			$clauses[] = $or;
+		}
+
+		$featured = trim( (string) $req['featured'] );
+		if ( '' !== $featured ) {
+			$f = filter_var( $featured, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+			if ( null === $f ) {
+				return new \WP_Error( 'gasf_featured_invalid', __( 'featured must be 1 or 0.', 'gasf-events' ), [ 'status' => 400 ] );
+			}
+			$clauses[] = $f
+				? [ 'key' => Meta::FEATURED, 'value' => '1' ]
+				: [ 'relation' => 'OR', [ 'key' => Meta::FEATURED, 'compare' => 'NOT EXISTS' ], [ 'key' => Meta::FEATURED, 'value' => '1', 'compare' => '!=' ] ];
+		}
+
+		$source = trim( (string) $req['source'] );
+		if ( '' !== $source ) {
+			$clauses[] = 'manual' === $source
+				? [ 'relation' => 'OR', [ 'key' => Meta::SOURCE, 'value' => 'manual' ], [ 'key' => Meta::SOURCE, 'compare' => 'NOT EXISTS' ] ]
+				: [ 'key' => Meta::SOURCE, 'value' => $source ];
+		}
+
+		$series = trim( (string) $req['series_id'] );
+		if ( '' !== $series ) {
+			$clauses[] = [ 'key' => Meta::SERIES_ID, 'value' => $series ];
+		}
+
+		return $clauses;
 	}
 
 	/**

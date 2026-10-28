@@ -43,6 +43,7 @@ foreach ( [
 	'gasf_events_gbp_hash', 'gasf_events_gbp_last', 'gasf_events_gbp_health', 'gasf_events_gbp_mailed',
 	'gasf_hero_field_memory', // quick-create pre-fill cache, not the hero queue itself
 	'gasf_events_heartbeat', 'gasf_events_heartbeat_mailed', 'gasf_events_last_purge',
+	'gasf_events_webhooks', 'gasf_events_webhook_queue', // receiver URLs + secrets
 ] as $gasf_opt ) {
 	delete_option( $gasf_opt );
 }

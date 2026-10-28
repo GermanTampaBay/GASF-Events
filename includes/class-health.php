@@ -283,6 +283,20 @@ final class Health {
 			$rows[] = [ __( 'Recurring heroes', 'gasf-events' ), $hn ? 'ok' : 'warn', sprintf( __( 'Hourly purge scheduler · next %s', 'gasf-events' ), $at( $hn ) ) ];
 		}
 
+		// 5b. Webhooks.
+		$wh = Webhooks::enabled_hooks();
+		if ( $wh ) {
+			$bad = Webhooks::failing();
+			$wq  = Webhooks::queue_length();
+			$rows[] = [
+				__( 'Webhooks', 'gasf-events' ),
+				$bad ? 'bad' : ( $wq ? 'warn' : 'ok' ),
+				$bad
+					? sprintf( __( '%1$d of %2$d receiver(s) failing: %3$s', 'gasf-events' ), count( $bad ), count( $wh ), implode( ' | ', array_map( static fn( $h ) => ( $h['label'] ?: $h['url'] ) . ' — ' . $h['last_error'], $bad ) ) )
+					: sprintf( __( '%1$d receiver(s) · %2$d waiting to retry', 'gasf-events' ), count( $wh ), $wq ),
+			];
+		}
+
 		// 6. Cache purge.
 		$p = (array) get_option( Cache::OPT_LAST, [] );
 		$rows[] = [

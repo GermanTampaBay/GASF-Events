@@ -61,6 +61,11 @@ final class Meta_Box {
 		$locked    = (bool) $g( Meta::SYNC_LOCKED );
 		$venue_ov  = (array) ( $g( Meta::VENUE_OVERRIDE ) ?: [] );
 
+		$featured    = (bool) $g( Meta::FEATURED );
+		$priority    = (int) $g( Meta::PRIORITY );
+		$short_title = (string) $g( Meta::SHORT_TITLE );
+		$sign_text   = (string) $g( Meta::SIGN_TEXT );
+
 		$role      = (string) $g( Meta::SERIES_ROLE ) ?: 'single';
 		$repeat    = (string) $g( Meta::REPEAT );
 		$rep_until = (string) $g( Meta::REPEAT_UNTIL );
@@ -118,6 +123,20 @@ final class Meta_Box {
 
 			<label class="row"><?php esc_html_e( 'Cost (USD, leave blank if free)', 'gasf-events' ); ?></label>
 			<input type="number" step="0.01" min="0" name="gasf_cost" value="<?php echo esc_attr( $cost ); ?>" style="width:120px;">
+
+			<fieldset class="adv">
+				<label class="row" style="margin-top:0;"><?php esc_html_e( 'Road sign & promotion', 'gasf-events' ); ?></label>
+				<p style="margin:4px 0 8px;">
+					<label><input type="checkbox" name="gasf_featured" value="1" <?php checked( $featured ); ?>> <?php esc_html_e( 'Featured — offer this event to the road sign and the home page', 'gasf-events' ); ?></label>
+					<label style="margin-left:18px;"><?php esc_html_e( 'Priority', 'gasf-events' ); ?>
+						<input type="number" name="gasf_priority" min="0" max="100" value="<?php echo esc_attr( $priority ?: '' ); ?>" placeholder="0" style="width:70px;">
+					</label>
+					<span class="description"><?php esc_html_e( '0–100, higher shows first among featured events.', 'gasf-events' ); ?></span>
+				</p>
+				<input type="text" name="gasf_short_title" maxlength="<?php echo (int) Meta::SHORT_TITLE_MAX; ?>" value="<?php echo esc_attr( $short_title ); ?>" placeholder="<?php echo esc_attr( sprintf( /* translators: %d: character limit */ __( 'Short title for the sign (up to %d characters; blank = the full title)', 'gasf-events' ), Meta::SHORT_TITLE_MAX ) ); ?>" style="width:48%;">
+				<input type="text" name="gasf_sign_text" maxlength="<?php echo (int) Meta::SIGN_TEXT_MAX; ?>" value="<?php echo esc_attr( $sign_text ); ?>" placeholder="<?php esc_attr_e( 'Sign text — a few words, e.g. “Sat 7 pm · $5 at the door”', 'gasf-events' ); ?>" style="width:48%;">
+				<p class="description" style="margin:4px 0 0;"><?php esc_html_e( 'Read by the road sign and kiosk through the events feed (short_title, sign_text, featured, priority). The website itself does not show these.', 'gasf-events' ); ?></p>
+			</fieldset>
 
 			<fieldset class="adv">
 				<label class="row" style="margin-top:0;"><?php esc_html_e( 'Override venue (optional — leave blank to use the club)', 'gasf-events' ); ?></label>
@@ -297,6 +316,23 @@ final class Meta_Box {
 			update_post_meta( $post_id, Meta::COST, $cost );
 		} else {
 			delete_post_meta( $post_id, Meta::COST );
+		}
+
+		// Road sign & promotion.
+		update_post_meta( $post_id, Meta::FEATURED, empty( $_POST['gasf_featured'] ) ? 0 : 1 );
+		$priority = max( 0, min( 100, (int) ( $_POST['gasf_priority'] ?? 0 ) ) );
+		if ( $priority > 0 ) {
+			update_post_meta( $post_id, Meta::PRIORITY, $priority );
+		} else {
+			delete_post_meta( $post_id, Meta::PRIORITY );
+		}
+		foreach ( [ 'gasf_short_title' => [ Meta::SHORT_TITLE, Meta::SHORT_TITLE_MAX ], 'gasf_sign_text' => [ Meta::SIGN_TEXT, Meta::SIGN_TEXT_MAX ] ] as $field => $spec ) {
+			$v = mb_substr( trim( sanitize_text_field( wp_unslash( $_POST[ $field ] ?? '' ) ) ), 0, $spec[1] );
+			if ( '' !== $v ) {
+				update_post_meta( $post_id, $spec[0], $v );
+			} else {
+				delete_post_meta( $post_id, $spec[0] );
+			}
 		}
 
 		// Venue override (only stored when a name is given).

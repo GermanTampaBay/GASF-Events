@@ -38,6 +38,16 @@ final class Meta {
 	const TV_INPUT   = '_gasf_tv_input';    // '' | directv | googletv | roku | fire
 	const TV_CHANNEL = '_gasf_tv_channel';  // DirecTV channel number or app slug
 
+	// Promotion (road sign, home page, kiosk) — v0.37.0. The sign builds a
+	// slide per event; these let a maintainer say which events deserve one,
+	// in what order, and what the few words on it should be.
+	const FEATURED    = '_gasf_featured';     // bool — offered to the sign / home page
+	const PRIORITY    = '_gasf_priority';     // int 0..100, higher first among featured
+	const SHORT_TITLE = '_gasf_short_title';  // sign headline (≤ SHORT_TITLE_MAX chars)
+	const SIGN_TEXT   = '_gasf_sign_text';    // the line under it (≤ SIGN_TEXT_MAX chars)
+	const SHORT_TITLE_MAX = 40;
+	const SIGN_TEXT_MAX   = 80;
+
 	// Provenance & sync.
 	const SOURCE       = '_gasf_source';        // manual | facebook | ics | eventbrite
 	const SOURCE_UID   = '_gasf_source_uid';    // universal dedup key, namespaced "<source>|<uid>"
@@ -164,7 +174,7 @@ final class Meta {
 			self::START, self::END, self::STATUS, self::STATUS_REASON, self::ONLINE_LINK,
 			self::MORE_INFO_URL, self::MORE_INFO_TITLE, self::SOURCE, self::FB_EVENT_ID,
 			self::FB_COVER_ID, self::SERIES_ID, self::SERIES_ROLE,
-			self::REPEAT, self::REPEAT_UNTIL,
+			self::REPEAT, self::REPEAT_UNTIL, self::SHORT_TITLE, self::SIGN_TEXT,
 		];
 		foreach ( $string_keys as $key ) {
 			register_post_meta( GASF_EVENTS_CPT, $key, [
@@ -176,7 +186,7 @@ final class Meta {
 			] );
 		}
 
-		$int_keys = [ self::START_TS, self::END_TS, self::FB_MISSING, self::VIEWS, self::VIEWS_KIOSK, self::REPEAT_COUNT ];
+		$int_keys = [ self::START_TS, self::END_TS, self::FB_MISSING, self::VIEWS, self::VIEWS_KIOSK, self::REPEAT_COUNT, self::PRIORITY ];
 		foreach ( $int_keys as $key ) {
 			register_post_meta( GASF_EVENTS_CPT, $key, [
 				'type'              => 'integer',
@@ -187,7 +197,7 @@ final class Meta {
 			] );
 		}
 
-		$bool_keys = [ self::ALL_DAY, self::HIDE_TIME, self::HIDE_END, self::SYNC_LOCKED ];
+		$bool_keys = [ self::ALL_DAY, self::HIDE_TIME, self::HIDE_END, self::SYNC_LOCKED, self::FEATURED ];
 		foreach ( $bool_keys as $key ) {
 			register_post_meta( GASF_EVENTS_CPT, $key, [
 				'type'              => 'boolean',
