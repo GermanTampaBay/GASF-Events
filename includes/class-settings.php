@@ -249,10 +249,11 @@ final class Settings {
 
 	/**
 	 * A #rgb / #rrggbb colour, or '' (meaning "inherit the built-in colour").
-	 * Hand-rolled rather than using core's sanitize_hex_color(): that one lives
-	 * in wp-admin and is not guaranteed loaded wherever a sanitize callback or
-	 * a WP-CLI write runs. An unparseable value returns '' rather than a
-	 * fallback colour, so a typo inherits instead of silently painting grey.
+	 * Kept hand-rolled instead of core's sanitize_hex_color() (which does live
+	 * in wp-includes/formatting.php and is always available) because this one
+	 * also accepts a value typed without the leading '#', which the colour
+	 * field's placeholder invites. An unparseable value returns '' rather than
+	 * a fallback colour, so a typo inherits instead of silently painting grey.
 	 */
 	private static function sanitize_hex_color( string $v ): string {
 		$v = trim( $v );

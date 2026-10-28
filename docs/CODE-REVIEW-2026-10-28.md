@@ -15,7 +15,14 @@ as this document). P2-1 is fixed only for status: occurrences now follow the mas
 between draft and published. Removing future occurrences when a rule shrinks or the
 master's weekday changes was deliberately **not** done, because an occurrence a
 maintainer moved to a different date by hand is indistinguishable from one the rule
-no longer produces, and trashing it would destroy that edit. The P3 list is still open.
+no longer produces, and trashing it would destroy that edit. The P3 list is fixed in
+v0.35.0 except one item kept as is: `/events/changes` still lists never-published
+drafts under `removed`. There is no reliable way to tell "was published once" from a
+post's rows, and a consumer dropping an id it never held is a no-op, so no code was
+added for it. Recurring ICS expansion (new in v0.35.0) is the one P3 fix that adds
+behaviour; it runs only for ICS feeds aimed at the GASF calendar, which none currently
+are, and a previously-ingested recurring master will be re-keyed per date on the first
+run (the old single post is drafted by the normal miss-prune after two runs).
 
 ---
 

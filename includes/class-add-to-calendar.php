@@ -133,8 +133,10 @@ final class Add_To_Calendar {
 		$location = self::location_string( $event );
 
 		$g_dates  = self::utc( $start ) . '/' . self::utc( $end );
-		$iso_s    = $start->format( 'Y-m-d\TH:i:s' );
-		$iso_e    = $end->format( 'Y-m-d\TH:i:s' );
+		// With the site offset: Outlook read the bare form in the VIEWER's
+		// timezone, so a visitor outside Florida got the wrong hour.
+		$iso_s    = $start->format( 'c' );
+		$iso_e    = $end->format( 'c' );
 
 		return [
 			[

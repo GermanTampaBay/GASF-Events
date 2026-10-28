@@ -168,6 +168,9 @@ final class Meta_Box {
 						if ( $siblings ) :
 							?>
 							<a href="<?php echo esc_url( get_edit_post_link( $siblings[0] ) ); ?>"><?php esc_html_e( 'Edit the series', 'gasf-events' ); ?></a>
+						<?php elseif ( $series_id ) : ?>
+							<?php // Feed-sourced series (Facebook, ICS) have no master post: the rule lives at the source. ?>
+							<a href="<?php echo esc_url( add_query_arg( [ 'post_type' => GASF_EVENTS_CPT, 'gasf_series' => $series_id ], admin_url( 'edit.php' ) ) ); ?>"><?php esc_html_e( 'Show all dates in this series', 'gasf-events' ); ?></a>
 						<?php endif; ?>
 					</p>
 				</fieldset>

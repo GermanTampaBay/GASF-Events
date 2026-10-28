@@ -32,6 +32,36 @@ delete_option( 'gasf_events_enable_sync' );
 delete_option( 'gasf_events_caps_ver' );
 delete_transient( 'gasf_events_gcal_token' );
 
+// Settings (Events → Settings) and derived bookkeeping. gasf_events_venues is
+// a remembered form fill that Venues::all() rebuilds from the event posts on
+// first read, so dropping it loses nothing.
+foreach ( [
+	'gasf_events_dinner_filter', 'gasf_events_bayern_filter', 'gasf_events_type_rules',
+	'gasf_events_venues',
+	'gasf_events_tombstones', 'gasf_events_pub_queue', 'gasf_events_last_run', 'gasf_events_sync_log',
+	'gasf_events_gbp_enable', 'gasf_events_gbp_location', 'gasf_events_gbp_window', 'gasf_events_gbp_buffer',
+	'gasf_events_gbp_hash', 'gasf_events_gbp_last', 'gasf_events_gbp_health', 'gasf_events_gbp_mailed',
+	'gasf_hero_field_memory', // quick-create pre-fill cache, not the hero queue itself
+] as $gasf_opt ) {
+	delete_option( $gasf_opt );
+}
+foreach ( [
+	'gasf_events_gbp_token', 'gasf_events_gbp_regular', 'gasf_events_update_check',
+	'gasf_events_asset_ver', 'gasf_ics_all',
+] as $gasf_tr ) {
+	delete_transient( $gasf_tr );
+}
+// Per-feed, per-viewer and per-week caches carry an id in the name, so they
+// are swept by prefix: feed .ics last-good copies, view-counter dedup and
+// rate buckets, Welton Oktoberfest-week answers, feed-run result notices.
+global $wpdb;
+foreach ( [ 'gasf_feed_ics_lg_', '_transient_gasf_feed_ics_', '_transient_timeout_gasf_feed_ics_',
+	'_transient_gasf_v_', '_transient_timeout_gasf_v_', '_transient_gasf_vrate_', '_transient_timeout_gasf_vrate_',
+	'_transient_gasf_welton_okt_', '_transient_timeout_gasf_welton_okt_',
+	'_transient_gasf_feeds_result_', '_transient_timeout_gasf_feeds_result_' ] as $gasf_prefix ) {
+	$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $wpdb->esc_like( $gasf_prefix ) . '%' ) ); // phpcs:ignore WordPress.DB
+}
+
 $caps = [
 	'edit_gasf_event', 'read_gasf_event', 'delete_gasf_event',
 	'edit_gasf_events', 'edit_others_gasf_events', 'publish_gasf_events',

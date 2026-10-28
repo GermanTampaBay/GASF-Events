@@ -83,7 +83,9 @@ final class Bulk_Actions {
 			return preg_match( '/^[=+\-@\t\r]/', $v ) ? "'" . $v : $v;
 		};
 		$out = fopen( 'php://output', 'w' );
-		fputcsv( $out, [ 'ID', 'Title', 'Added', 'Start', 'End', 'All day', 'Status', 'Source', 'Venue', 'URL', 'Views', 'Eventbrite URL' ] );
+		// PHP 8.4 deprecates relying on fputcsv()'s default $escape, so the
+		// separator, enclosure and escape are spelled out (the same values).
+		fputcsv( $out, [ 'ID', 'Title', 'Added', 'Start', 'End', 'All day', 'Status', 'Source', 'Venue', 'URL', 'Views', 'Eventbrite URL' ], ',', '"', '\\' );
 		foreach ( $ids as $id ) {
 			$e = Event::get( $id );
 			if ( ! $e ) {
@@ -103,7 +105,7 @@ final class Bulk_Actions {
 				$safe( $e->permalink() ),
 				$e->views(),
 				$safe( $e->eventbrite_url() ),
-			] );
+			], ',', '"', '\\' );
 		}
 		fclose( $out ); // phpcs:ignore
 		exit;

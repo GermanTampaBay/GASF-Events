@@ -140,9 +140,14 @@ final class Plugin {
 	 * Deactivation: flush rewrites so the CPT's rules are dropped cleanly.
 	 */
 	public static function deactivate(): void {
+		// Literals rather than class constants: deactivate() runs without boot(),
+		// so Feeds / Hours_Sync / Syndication are not loaded here.
 		wp_clear_scheduled_hook( 'gasf_events_sync' );
 		wp_clear_scheduled_hook( 'gasf_events_drain' );
-		wp_clear_scheduled_hook( 'gasf_hero_recurring_cron' ); // owned by recurring-heroes.php
+		wp_clear_scheduled_hook( 'gasf_events_gbp_push' );      // Hours_Sync::CRON_PUSH
+		wp_clear_scheduled_hook( 'gasf_events_gbp_daily' );     // Hours_Sync::CRON_DAILY
+		wp_clear_scheduled_hook( 'gasf_hero_recurring_cron' );  // owned by recurring-heroes.php
+		wp_clear_scheduled_hook( 'gasf_hero_activate_event' );  // one-off purges, heroes.php
 		flush_rewrite_rules();
 	}
 }
