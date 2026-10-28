@@ -18,7 +18,13 @@
  *     hero when their go-live is at/after the recurring trigger.
  *
  * Matching is by event TITLE — the GASF Events data has no formal series ids;
- * repeating events simply share a title (e.g. "Euchre Night").
+ * repeating events simply share a title (e.g. "Euchre Night"). A rule matches
+ * either the exact title (the default) or, since v0.34.0, any title that
+ * CONTAINS its text — the same case-insensitive substring rule Events →
+ * Settings uses for the FC Bayern / Dinner Night lists — so one rule covers a
+ * series whose events are all named differently ("FC Bayern v Dortmund",
+ * "FC Bayern v Leipzig", …). With no image on the rule, each matched event's
+ * own cover becomes the hero, so every game advertises itself.
  *
  * Moved 2026-07 from GASF-Utilities (modules/23-recurring-heroes.php) into
  * GASF-Events alongside heroes.php — event-name-driven, so it belongs with the
@@ -50,6 +56,30 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 		update_option( GASF_HERO_RECURRING_OPTION, array_values( $defs ), false );
 	}
 
+	/**
+	 * How a rule matches event titles: 'exact' (the default, and what every
+	 * rule saved before v0.34.0 means — they have no 'match' key) or
+	 * 'contains', a case-insensitive substring match.
+	 */
+	function gasf_hero_recurring_match_mode( $def ) {
+		return ( is_array( $def ) && ( $def['match'] ?? '' ) === 'contains' ) ? 'contains' : 'exact';
+	}
+
+	/**
+	 * The SQL operator and bound value for a rule's title condition, so both
+	 * event queries share one definition of "matches". LIKE under MySQL's
+	 * default collation is case-insensitive, which is what the Settings-page
+	 * filters and the REST `contains=` parameter already rely on.
+	 * Returns [ operator, value ] for "p.post_title {operator} %s".
+	 */
+	function gasf_hero_recurring_title_condition( $title, $match ) {
+		global $wpdb;
+		if ( $match === 'contains' ) {
+			return array( 'LIKE', '%' . $wpdb->esc_like( $title ) . '%' );
+		}
+		return array( '=', $title );
+	}
+
 	/** Distinct titles of published events from ~a week ago onward (the pick list). */
 	function gasf_hero_recurring_event_titles() {
 		global $wpdb;
@@ -68,26 +98,28 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 
 	/**
 	 * The soonest matching event whose active window contains `$now`.
-	 * Active window = [ start - lead, end ].  Returns a row {ID,start_ts,end_ts}
-	 * or null. Picks the earliest-starting in-window occurrence (the most
-	 * imminent one we've already crossed the lead threshold for).
+	 * Active window = [ start - lead, end ].  $match is 'exact' or 'contains'
+	 * (see gasf_hero_recurring_match_mode). Returns a row {id,title,start_ts,
+	 * end_ts} or null. Picks the earliest-starting in-window occurrence (the
+	 * most imminent one we've already crossed the lead threshold for).
 	 */
-	function gasf_hero_recurring_find_event( $title, $lead_secs, $now ) {
+	function gasf_hero_recurring_find_event( $title, $lead_secs, $now, $match = 'exact' ) {
 		global $wpdb;
+		list( $op, $val ) = gasf_hero_recurring_title_condition( $title, $match );
 		$row = $wpdb->get_row( $wpdb->prepare(
-			"SELECT p.ID AS id,
+			"SELECT p.ID AS id, p.post_title AS title,
 			        CAST(ms.meta_value AS UNSIGNED) AS start_ts,
 			        COALESCE(CAST(me.meta_value AS UNSIGNED), CAST(ms.meta_value AS UNSIGNED)) AS end_ts
 			   FROM {$wpdb->posts} p
 			   JOIN {$wpdb->postmeta} ms ON ms.post_id = p.ID AND ms.meta_key = '_gasf_start_ts'
 			   LEFT JOIN {$wpdb->postmeta} me ON me.post_id = p.ID AND me.meta_key = '_gasf_end_ts'
-			  WHERE p.post_type = %s AND p.post_status = 'publish' AND p.post_title = %s
+			  WHERE p.post_type = %s AND p.post_status = 'publish' AND p.post_title {$op} %s
 			    AND CAST(ms.meta_value AS UNSIGNED) <= %d
 			    AND COALESCE(CAST(me.meta_value AS UNSIGNED), CAST(ms.meta_value AS UNSIGNED)) >= %d
 			  ORDER BY CAST(ms.meta_value AS UNSIGNED) ASC
 			  LIMIT 1",
 			GASF_HERO_EVENT_CPT,
-			$title,
+			$val,
 			$now + $lead_secs, // start_ts <= now + lead  (lead window has opened)
 			$now               // end_ts   >= now         (event not yet over)
 		) );
@@ -95,21 +127,22 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 	}
 
 	/** The next upcoming occurrence (start in the future), for cron scheduling. */
-	function gasf_hero_recurring_next_event( $title, $now ) {
+	function gasf_hero_recurring_next_event( $title, $now, $match = 'exact' ) {
 		global $wpdb;
+		list( $op, $val ) = gasf_hero_recurring_title_condition( $title, $match );
 		$row = $wpdb->get_row( $wpdb->prepare(
-			"SELECT p.ID AS id,
+			"SELECT p.ID AS id, p.post_title AS title,
 			        CAST(ms.meta_value AS UNSIGNED) AS start_ts,
 			        COALESCE(CAST(me.meta_value AS UNSIGNED), CAST(ms.meta_value AS UNSIGNED)) AS end_ts
 			   FROM {$wpdb->posts} p
 			   JOIN {$wpdb->postmeta} ms ON ms.post_id = p.ID AND ms.meta_key = '_gasf_start_ts'
 			   LEFT JOIN {$wpdb->postmeta} me ON me.post_id = p.ID AND me.meta_key = '_gasf_end_ts'
-			  WHERE p.post_type = %s AND p.post_status = 'publish' AND p.post_title = %s
+			  WHERE p.post_type = %s AND p.post_status = 'publish' AND p.post_title {$op} %s
 			    AND CAST(ms.meta_value AS UNSIGNED) >= %d
 			  ORDER BY CAST(ms.meta_value AS UNSIGNED) ASC
 			  LIMIT 1",
 			GASF_HERO_EVENT_CPT,
-			$title,
+			$val,
 			$now
 		) );
 		return $row ?: null;
@@ -136,9 +169,13 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 			'event_id'     => (int) $ev->id,
 			'_recurring'   => true,
 			'_expire_at'   => (int) $ev->end_ts,
-			// Provenance for the Heroes schedule: the rule's title (for display)
-			// and its def id (so an Edit button can deep-link to that rule).
-			'_title'       => (string) ( $def['title'] ?? '' ),
+			// Provenance for the Heroes schedule: the matched event's title (what
+			// the page is actually advertising — under a "contains" rule every
+			// occurrence is named differently), the rule's text and mode, and
+			// its def id (so an Edit button can deep-link to that rule).
+			'_title'       => (string) ( $ev->title ?? ( $def['title'] ?? '' ) ),
+			'_rule'        => (string) ( $def['title'] ?? '' ),
+			'_match'       => gasf_hero_recurring_match_mode( $def ),
 			'_def_id'      => (string) ( $def['id'] ?? '' ),
 		);
 	}
@@ -150,7 +187,7 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 		foreach ( gasf_hero_recurring_get() as $def ) {
 			if ( empty( $def['enabled'] ) || empty( $def['title'] ) ) { continue; }
 			$lead = max( 0, (int) ( $def['lead_days'] ?? GASF_HERO_DEFAULT_LEAD_DAYS ) ) * DAY_IN_SECONDS;
-			$ev   = gasf_hero_recurring_find_event( $def['title'], $lead, $now );
+			$ev   = gasf_hero_recurring_find_event( $def['title'], $lead, $now, gasf_hero_recurring_match_mode( $def ) );
 			if ( ! $ev ) { continue; }
 			$def['_lead_secs'] = $lead;
 			$entry = gasf_hero_recurring_entry( $def, $ev );
@@ -174,12 +211,11 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 			if ( empty( $def['enabled'] ) || empty( $def['title'] ) ) { continue; }
 			$lead = max( 0, (int) ( $def['lead_days'] ?? GASF_HERO_DEFAULT_LEAD_DAYS ) ) * DAY_IN_SECONDS;
 			// start_ts >= anchor + lead + 1  ->  activate_at (start - lead) > anchor.
-			$ev = gasf_hero_recurring_next_event( $def['title'], $anchor_ts + $lead + 1 );
+			$ev = gasf_hero_recurring_next_event( $def['title'], $anchor_ts + $lead + 1, gasf_hero_recurring_match_mode( $def ) );
 			if ( ! $ev ) { continue; }
 			$def['_lead_secs'] = $lead;
 			$entry = gasf_hero_recurring_entry( $def, $ev );
 			if ( ! $entry ) { continue; }
-			$entry['_title'] = (string) $def['title'];
 			if ( $best === null || $entry['activate_at'] < $best['activate_at'] ) { $best = $entry; }
 		}
 		return $best;
@@ -223,7 +259,7 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 		foreach ( gasf_hero_recurring_get() as $def ) {
 			if ( empty( $def['enabled'] ) || empty( $def['title'] ) ) { continue; }
 			$lead = max( 0, (int) ( $def['lead_days'] ?? GASF_HERO_DEFAULT_LEAD_DAYS ) ) * DAY_IN_SECONDS;
-			$ev   = gasf_hero_recurring_next_event( $def['title'], $now );
+			$ev   = gasf_hero_recurring_next_event( $def['title'], $now, gasf_hero_recurring_match_mode( $def ) );
 			if ( ! $ev ) { continue; }
 			$activate = (int) $ev->start_ts - $lead;
 			$expire   = (int) $ev->end_ts;
@@ -265,6 +301,7 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 			} else {
 				$data = array(
 					'title'        => $title,
+					'match'        => ( ( $_POST['gasf_rhero_match'] ?? '' ) === 'contains' ) ? 'contains' : 'exact',
 					'image_id'     => $image_id,
 					'image_url'    => esc_url_raw( wp_unslash( $_POST['gasf_rhero_image_url'] ?? '' ) ),
 					'max_width'    => max( 0, (int) ( $_POST['gasf_rhero_max_width'] ?? 450 ) ),
@@ -299,13 +336,14 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 		<?php
 		if ( function_exists( 'gasf_events_help_box' ) ) {
 			gasf_events_help_box( array(
-				'what'   => 'Set-and-forget home-page heroes for repeating events (Euchre Night, Krampus Meetup, Biergarten…). Define one entry per event name and the hero automatically goes live a few days before each occurrence on the events calendar and disappears when the event ends. If the event isn\'t on the calendar that month, nothing shows — the hero can never advertise something that isn\'t happening.',
+				'what'   => 'Set-and-forget home-page heroes for repeating events (Euchre Night, Krampus Meetup, Biergarten, every FC Bayern game…). Define one entry per event name and the hero automatically goes live a few days before each occurrence on the events calendar and disappears when the event ends. If the event isn\'t on the calendar that month, nothing shows — the hero can never advertise something that isn\'t happening.',
 				'needs'  => array(
-					'The event on the GASF events calendar with the <em>exact same title</em> each time (that\'s how occurrences are matched — the calendar has no series IDs).',
+					'The event on the GASF events calendar with the <em>same title</em> each time, or a recognisable piece of text in every title (that\'s how occurrences are matched — the calendar has no series IDs).',
 					'The <code>[gas_hero]</code> shortcode on the home page (shared with the Heroes tab).',
 				),
 				'fields' => array(
-					'Event name'                => 'Which calendar events trigger this hero. Pick from the dropdown (distinct upcoming titles) or type an exact title if it isn\'t listed yet. Matching is exact-title, so "Euchre Night" won\'t match "Euchre Night Special".',
+					'Event name'                => 'Which calendar events trigger this hero. Pick from the dropdown (distinct upcoming titles) or type a title if it isn\'t listed yet. With the default <em>exact</em> match, "Euchre Night" won\'t match "Euchre Night Special".',
+					'Match'                     => '<em>Exactly this title</em> for a repeating event that is always named the same. <em>Title contains</em> for a series whose events are all named differently — every FC Bayern game is its own event ("FC Bayern v Dortmund", "FC Bayern v Leipzig"), so one rule with the text <code>FC Bayern v</code> covers the whole season; case doesn\'t matter. It is the same rule as Events → Settings → Event list filters, so the text there works here.',
 					'Image'                     => 'Optional. Blank = use the matched event\'s cover image, which keeps the hero fresh automatically. If the event has no cover either, no hero shows (by design — better nothing than a stale image).',
 					'Image link (optional)'     => 'Where a click on the image goes. Blank = the matched event\'s own page, which is almost always what you want.',
 					'Caption / Button'          => 'Same as the Heroes tab: caption text under the image, plus an optional call-to-action button with its own link.',
@@ -332,7 +370,15 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 								<option value="<?php echo esc_attr( $t ); ?>"><?php echo esc_html( $t ); ?></option>
 							<?php endforeach; ?>
 						</select>
-						<p class="description">Matches events by exact title. Not listed? <input type="text" name="gasf_rhero_title_custom" class="regular-text" placeholder="type an exact event title" style="margin-top:4px"></p>
+						<p class="description">Not listed, or matching by text? <input type="text" name="gasf_rhero_title_custom" class="regular-text" placeholder="type an event title, or text to match" style="margin-top:4px"></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row">Match</th>
+					<td>
+						<label><input type="radio" name="gasf_rhero_match" value="exact" checked> Exactly this title</label><br>
+						<label><input type="radio" name="gasf_rhero_match" value="contains"> Any event whose title <strong>contains</strong> this text</label>
+						<p class="description">&ldquo;Contains&rdquo; is for a series whose events are all named differently, e.g. the text <code>FC Bayern v</code> matches every game of the season (keep the trailing &ldquo;v&rdquo; so an event that merely mentions the club doesn&rsquo;t match). Leave the image blank and each game&rsquo;s own cover becomes the hero.</p>
 					</td>
 				</tr>
 				<tr>
@@ -389,8 +435,9 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 				<tr><td colspan="6">No recurring heroes yet.</td></tr>
 			<?php else : foreach ( $defs as $d ) :
 				$lead   = max( 0, (int) ( $d['lead_days'] ?? GASF_HERO_DEFAULT_LEAD_DAYS ) );
-				$next   = ! empty( $d['title'] ) ? gasf_hero_recurring_next_event( $d['title'], $now ) : null;
-				$inwin  = ! empty( $d['enabled'] ) && ! empty( $d['title'] ) && gasf_hero_recurring_find_event( $d['title'], $lead * DAY_IN_SECONDS, $now );
+				$match  = gasf_hero_recurring_match_mode( $d );
+				$next   = ! empty( $d['title'] ) ? gasf_hero_recurring_next_event( $d['title'], $now, $match ) : null;
+				$inwin  = ! empty( $d['enabled'] ) && ! empty( $d['title'] ) && gasf_hero_recurring_find_event( $d['title'], $lead * DAY_IN_SECONDS, $now, $match );
 				$thumb  = $d['image_id'] ? wp_get_attachment_image( (int) $d['image_id'], array( 90, 90 ) ) : '<span style="color:#999">event cover</span>';
 				$status = empty( $d['enabled'] )
 					? '<span style="color:#888">disabled</span>'
@@ -398,14 +445,23 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 			?>
 				<tr>
 					<td><?php echo $thumb; // phpcs:ignore ?></td>
-					<td><strong><?php echo esc_html( $d['title'] ?? '' ); ?></strong></td>
+					<td><strong><?php echo esc_html( $d['title'] ?? '' ); ?></strong><?php echo $match === 'contains' ? '<br><small style="color:#6d28d9">title contains</small>' : ''; ?></td>
 					<td><?php echo (int) $lead; ?>d</td>
-					<td><?php echo $next ? esc_html( wp_date( 'M j, Y g:i a', (int) $next->start_ts ) ) : '<span style="color:#b3122b">none upcoming</span>'; ?></td>
+					<td><?php
+						if ( $next ) {
+							echo esc_html( wp_date( 'M j, Y g:i a', (int) $next->start_ts ) );
+							// Under a "contains" rule the occurrence's own name is the useful part.
+							if ( $match === 'contains' ) { echo '<br><small style="color:#666">' . esc_html( (string) $next->title ) . '</small>'; }
+						} else {
+							echo '<span style="color:#b3122b">none upcoming</span>';
+						}
+					?></td>
 					<td><?php echo $status; // phpcs:ignore ?></td>
 					<td style="white-space:nowrap">
 						<button type="button" class="button gasf-rhero-edit"
 							data-id="<?php echo esc_attr( $d['id'] ?? '' ); ?>"
 							data-title="<?php echo esc_attr( $d['title'] ?? '' ); ?>"
+							data-match="<?php echo esc_attr( $match ); ?>"
 							data-image-id="<?php echo esc_attr( $d['image_id'] ?? '' ); ?>"
 							data-image-url="<?php echo esc_attr( $d['image_url'] ?? '' ); ?>"
 							data-max-width="<?php echo esc_attr( $d['max_width'] ?? '450' ); ?>"
@@ -442,7 +498,13 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 			$(document).on('click', '.gasf-rhero-edit', function(){
 				var b = $(this);
 				$('#gasf_rhero_edit_id').val( b.attr('data-id') );
-				$('#gasf_rhero_title').val( b.attr('data-title') || '' );
+				// A "contains" rule's text (or an exact title no longer on the calendar)
+				// isn't an option in the dropdown; .val() would silently blank it and
+				// the save would then refuse. Fall through to the free-text box.
+				var title = b.attr('data-title') || '';
+				$('#gasf_rhero_title').val( title );
+				$('input[name=gasf_rhero_title_custom]').val( $('#gasf_rhero_title').val() === title ? '' : title );
+				$('input[name=gasf_rhero_match][value="' + ( b.attr('data-match') === 'contains' ? 'contains' : 'exact' ) + '"]').prop('checked', true);
 				$('#gasf_rhero_image_id').val( b.attr('data-image-id') || '' );
 				$('#gasf_rhero_image_url').val( b.attr('data-image-url') || '' );
 				$('#gasf_rhero_max_width').val( b.attr('data-max-width') || '450' );
@@ -460,6 +522,8 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 			$('#gasf_rhero_cancel').on('click', function(){
 				$('#gasf_rhero_edit_id,#gasf_rhero_image_id,#gasf_rhero_image_url,#gasf_rhero_caption,#gasf_rhero_button_label,#gasf_rhero_button_url').val('');
 				$('#gasf_rhero_title').val('');
+				$('input[name=gasf_rhero_title_custom]').val('');
+				$('input[name=gasf_rhero_match][value="exact"]').prop('checked', true);
 				$('#gasf_rhero_max_width').val('450');
 				$('#gasf_rhero_lead_days').val('<?php echo (int) GASF_HERO_DEFAULT_LEAD_DAYS; ?>');
 				$('#gasf_rhero_enabled').prop('checked', true);

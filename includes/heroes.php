@@ -342,7 +342,12 @@ if ( ! function_exists( 'gasf_hero_active' ) && \GASF_Events\Settings::heroes_en
 			<td>
 				<strong><?php echo esc_html( $rec['_title'] ?? '' ); ?></strong><br>
 				<?php echo ( isset( $rec['caption'] ) && '' !== $rec['caption'] ) ? esc_html( wp_trim_words( wp_strip_all_tags( $rec['caption'] ), 12 ) ) . '<br>' : ''; // phpcs:ignore ?>
-				<small style="color:#666">Auto-scheduled from the Recurring Heroes rule.</small>
+				<small style="color:#666">Auto-scheduled from the Recurring Heroes rule<?php
+					$rule = (string) ( $rec['_rule'] ?? '' );
+					if ( '' !== $rule && $rule !== (string) ( $rec['_title'] ?? '' ) ) {
+						echo ' &ldquo;' . esc_html( $rule ) . '&rdquo;' . ( ( $rec['_match'] ?? '' ) === 'contains' ? ' (title contains)' : '' );
+					}
+				?>.</small>
 			</td>
 			<td style="white-space:nowrap"><a class="button" href="<?php echo esc_url( $edit ); ?>">Edit</a></td>
 		</tr>
