@@ -114,6 +114,22 @@ final class Post_Type {
 	 *
 	 * @return string[] human-readable result lines
 	 */
+	/**
+	 * Read-only: which of the two indexes exist. For the Health screen, which
+	 * must never ALTER a table on a page load.
+	 *
+	 * @return array{present:string[],missing:string[]}
+	 */
+	public static function indexes_present(): array {
+		global $wpdb;
+		$out = [ 'present' => [], 'missing' => [] ];
+		foreach ( [ 'gasf_start_ts', 'gasf_end_ts' ] as $name ) {
+			$exists = $wpdb->get_results( $wpdb->prepare( "SHOW INDEX FROM {$wpdb->postmeta} WHERE Key_name = %s", $name ) ); // phpcs:ignore WordPress.DB
+			$out[ $exists ? 'present' : 'missing' ][] = $name;
+		}
+		return $out;
+	}
+
 	public static function ensure_indexes(): array {
 		global $wpdb;
 		$out   = [];

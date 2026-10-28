@@ -71,6 +71,63 @@ final class Rest {
 	public function register_hooks(): void {
 		add_action( 'rest_api_init', [ $this, 'routes' ] );
 		add_action( 'before_delete_post', [ __CLASS__, 'record_tombstone' ], 10, 2 );
+		add_filter( 'rest_pre_serve_request', [ __CLASS__, 'serve_304' ], 10, 2 );
+	}
+
+	/**
+	 * A 304 has no body. WP_REST_Server has already sent the status and
+	 * headers by the time this filter runs; returning true stops it echoing
+	 * the JSON-encoded null that would otherwise follow.
+	 */
+	public static function serve_304( $served, $result ) {
+		if ( $result instanceof \WP_REST_Response && 304 === $result->get_status() ) {
+			return true;
+		}
+		return $served;
+	}
+
+	/**
+	 * Conditional GET for the list and single routes.
+	 *
+	 * The host rewrites Cache-Control to no-store under /wp-json, so nothing
+	 * between the kiosk, the road sign and the database caches these
+	 * responses (REST-API.md, "Response headers"). What the plugin controls
+	 * is validation: an ETag over the exact payload and Last-Modified from the
+	 * newest post in it. A client that sends If-None-Match (or
+	 * If-Modified-Since) back gets a bodiless 304 when nothing changed, which
+	 * turns a poll into a few hundred bytes. The query still runs — only the
+	 * transfer is saved — but that is the half the client can feel.
+	 *
+	 * @param array|null $payload What the response carries (used for the ETag).
+	 * @param array      $posts   The WP_Post objects behind it (Last-Modified).
+	 */
+	private static function with_validators( \WP_REST_Response $resp, $payload, array $posts ): \WP_REST_Response {
+		$etag = '"' . md5( (string) wp_json_encode( $payload ) ) . '"';
+		$resp->header( 'ETag', $etag );
+
+		$latest = 0;
+		foreach ( $posts as $p ) {
+			$latest = max( $latest, (int) get_post_modified_time( 'U', true, $p ) );
+		}
+		if ( $latest ) {
+			$resp->header( 'Last-Modified', gmdate( 'D, d M Y H:i:s', $latest ) . ' GMT' );
+		}
+
+		$not_modified = false;
+		$inm = isset( $_SERVER['HTTP_IF_NONE_MATCH'] ) ? trim( (string) wp_unslash( $_SERVER['HTTP_IF_NONE_MATCH'] ) ) : '';
+		if ( '' !== $inm ) {
+			// "W/" marks a weak validator; the hash underneath is what matters.
+			$offered      = array_map( static fn( $t ) => trim( str_replace( 'W/', '', $t ) ), explode( ',', $inm ) );
+			$not_modified = in_array( $etag, $offered, true ) || in_array( '*', $offered, true );
+		} elseif ( $latest && isset( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) ) {
+			$ims          = strtotime( (string) wp_unslash( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) );
+			$not_modified = false !== $ims && $ims >= $latest;
+		}
+		if ( $not_modified ) {
+			$resp->set_status( 304 );
+			$resp->set_data( null );
+		}
+		return $resp;
 	}
 
 	public function routes(): void {
@@ -356,7 +413,7 @@ final class Rest {
 		$resp = new \WP_REST_Response( $data );
 		$resp->header( 'X-GASF-Count', (string) count( $data ) );
 		$resp->header( 'Cache-Control', 'public, max-age=120' );
-		return $resp;
+		return self::with_validators( $resp, $data, $q->posts );
 	}
 
 	public function single( \WP_REST_Request $req ) {
@@ -368,7 +425,8 @@ final class Rest {
 		if ( ! $e || 'publish' !== get_post_status( $e->id() ) ) {
 			return new \WP_REST_Response( [ 'error' => 'not_found' ], 404 );
 		}
-		return new \WP_REST_Response( $this->to_json( $e, $fields ) );
+		$data = $this->to_json( $e, $fields );
+		return self::with_validators( new \WP_REST_Response( $data ), $data, [ $e->post() ] );
 	}
 
 	/**

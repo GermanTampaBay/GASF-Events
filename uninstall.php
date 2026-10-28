@@ -42,12 +42,13 @@ foreach ( [
 	'gasf_events_gbp_enable', 'gasf_events_gbp_location', 'gasf_events_gbp_window', 'gasf_events_gbp_buffer',
 	'gasf_events_gbp_hash', 'gasf_events_gbp_last', 'gasf_events_gbp_health', 'gasf_events_gbp_mailed',
 	'gasf_hero_field_memory', // quick-create pre-fill cache, not the hero queue itself
+	'gasf_events_heartbeat', 'gasf_events_heartbeat_mailed', 'gasf_events_last_purge',
 ] as $gasf_opt ) {
 	delete_option( $gasf_opt );
 }
 foreach ( [
 	'gasf_events_gbp_token', 'gasf_events_gbp_regular', 'gasf_events_update_check',
-	'gasf_events_asset_ver', 'gasf_ics_all',
+	'gasf_events_asset_ver', 'gasf_ics_all', 'gasf_events_heartbeat_check',
 ] as $gasf_tr ) {
 	delete_transient( $gasf_tr );
 }

@@ -31,6 +31,20 @@ final class Alerts {
 	}
 
 	/**
+	 * Send one alert to the configured address. The subject is prefixed with
+	 * the site host so the inbox can tell sites apart. Returns false when no
+	 * address is set or wp_mail() refused; never throws.
+	 */
+	public static function send( string $subject, string $body ): bool {
+		$to = self::email();
+		if ( '' === $to ) {
+			return false;
+		}
+		$site = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+		return (bool) wp_mail( $to, '[' . $site . '] ' . $subject, $body );
+	}
+
+	/**
 	 * Record one auto-drafted event. Called by Event_Ingest::prune_missing()
 	 * at the moment it unpublishes; capture the details now, while they're
 	 * cheap to read.

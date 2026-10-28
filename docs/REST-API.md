@@ -46,6 +46,23 @@ finished yet). Supplying either one switches to an explicit window, so
   `no-store` for everything under `/wp-json`, so nothing caches these responses:
   not browsers, not the CDN. Assume every request is a live database hit and
   poll accordingly. Tracked as a config fix, not a plugin one.
+- `ETag` and `Last-Modified` (v0.36.0) — on `/events`, `/events/{x-y}` and
+  `/events/{id}`. Send the `ETag` back as `If-None-Match` (or the date as
+  `If-Modified-Since`) on your next poll and an unchanged result comes back as
+  a bodiless **304**. The database query still runs; the transfer does not.
+  For a kiosk or sign polling every minute this is the difference between a
+  few hundred bytes and the whole payload each time.
+
+```
+GET /events?limit=5&fields=title,start,image
+If-None-Match: "3c6e0b8a9c15224a8228b9a98ca1531d"
+
+HTTP/1.1 304 Not Modified
+ETag: "3c6e0b8a9c15224a8228b9a98ca1531d"
+```
+
+The `ETag` is a hash of the exact payload, so it changes with `fields`, `limit`
+and every other parameter. Keep one per URL.
 
 ---
 

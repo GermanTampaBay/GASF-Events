@@ -303,6 +303,14 @@ final class Feeds {
 			// One summary email per run for anything prune_missing() unpublished
 			// (see class-alerts.php — silent auto-drafts hid a live event once).
 			Alerts::flush();
+			if ( $stats['created'] || $stats['updated'] || $stats['drafted'] ) {
+				/**
+				 * A real run changed the calendar. Cache listens and purges once.
+				 *
+				 * @param array $stats The run's counts.
+				 */
+				do_action( 'gasf_events_feed_run_complete', $stats );
+			}
 		}
 		return $stats;
 	}

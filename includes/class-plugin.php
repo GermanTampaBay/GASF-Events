@@ -69,6 +69,9 @@ final class Plugin {
 		require_once $dir . 'class-eventbrite.php';
 		require_once $dir . 'class-stats.php';
 		require_once $dir . 'class-rest.php';
+		require_once $dir . 'class-seo.php';
+		require_once $dir . 'class-cache.php';
+		require_once $dir . 'class-health.php';
 		if ( is_admin() ) {
 			require_once $dir . 'class-meta-box.php';
 			require_once $dir . 'class-admin-list.php';
@@ -109,6 +112,9 @@ final class Plugin {
 		( new GBP_Notice() )->register_hooks();
 		( new Syndication() )->register_hooks();
 		( new Stats() )->register_hooks();
+		( new Seo() )->register_hooks();
+		( new Cache() )->register_hooks();
+		( new Health() )->register_hooks();
 
 		if ( is_admin() ) {
 			( new Meta_Box() )->register_hooks();
@@ -148,6 +154,7 @@ final class Plugin {
 		wp_clear_scheduled_hook( 'gasf_events_gbp_daily' );     // Hours_Sync::CRON_DAILY
 		wp_clear_scheduled_hook( 'gasf_hero_recurring_cron' );  // owned by recurring-heroes.php
 		wp_clear_scheduled_hook( 'gasf_hero_activate_event' );  // one-off purges, heroes.php
+		wp_clear_scheduled_hook( 'gasf_events_heartbeat' );     // Health::CRON_HOOK
 		flush_rewrite_rules();
 	}
 }
