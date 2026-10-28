@@ -1,7 +1,9 @@
 .DS_Store
 *.log
 node_modules/
-vendor/
+# Root-only: a bare "vendor/" also matched assets/js/vendor/, which kept the
+# vendored Alpine build out of every release zip (see docs/CODE-REVIEW-2026-10-28.md).
+/vendor/
 /.idea/
 /.vscode/
 *.zip

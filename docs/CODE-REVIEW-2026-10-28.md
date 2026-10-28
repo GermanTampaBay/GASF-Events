@@ -10,6 +10,9 @@ on something outside the repo (host config, live data) that could not be checked
 Severity: **P1** = breaks something visible or corrupts data; **P2** = wrong under
 realistic conditions; **P3** = cleanup / hardening / drift.
 
+**Status:** P1-1, P1-2 and P1-3 are fixed in v0.33.2 (same branch as this document).
+Everything from P2-1 down is still open.
+
 ---
 
 ## 1. Bugs

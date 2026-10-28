@@ -193,6 +193,15 @@ final class Meta_Box {
 					<label style="margin-left:14px;"><input type="checkbox" name="gasf_sync_locked" value="1" <?php checked( $locked ); ?>> <?php esc_html_e( "Pin — don't let the feed sync overwrite this event", 'gasf-events' ); ?></label>
 				<?php endif; ?>
 			</p>
+			<?php if ( $synced ) : ?>
+				<p class="description" style="margin-top:-8px;">
+					<?php
+					echo $locked
+						? esc_html__( 'Untick and save to resume syncing: the next feed run replaces the title, description and times with the feed\'s version. Editing any of those afterwards pins it again automatically.', 'gasf-events' )
+						: esc_html__( 'Editing the title, description or times pins this event automatically so the feed cannot undo your change.', 'gasf-events' );
+					?>
+				</p>
+			<?php endif; ?>
 		</div>
 		<script>
 		( function () {
@@ -286,14 +295,31 @@ final class Meta_Box {
 		// The sync pin (meaningful for any feed-sourced event: facebook, ics, …).
 		$event = Event::get( $post_id );
 		if ( $event && $event->is_synced() ) {
-			update_post_meta( $post_id, Meta::SYNC_LOCKED, empty( $_POST['gasf_sync_locked'] ) ? 0 : 1 );
+			// Read the stored value BEFORE writing: whether the box was ticked on the
+			// way in decides what an unticked box means on the way out.
+			$was_locked = (bool) get_post_meta( $post_id, Meta::SYNC_LOCKED, true );
+			$now_locked = ! empty( $_POST['gasf_sync_locked'] );
+			update_post_meta( $post_id, Meta::SYNC_LOCKED, $now_locked ? 1 : 0 );
 
-			// Auto-pin on edit: if the maintainer changed a synced field but left the
-			// pin off, pin it anyway so their edit isn't reverted by the next sync.
-			if ( empty( $_POST['gasf_sync_locked'] ) ) {
-				$snap = (string) get_post_meta( $post_id, Meta::FB_SNAPSHOT, true );
-				if ( '' !== $snap && $snap !== Event_Ingest::snapshot_post( $post_id ) ) {
-					update_post_meta( $post_id, Meta::SYNC_LOCKED, 1 );
+			if ( ! $now_locked ) {
+				if ( $was_locked ) {
+					// An explicit untick is "resume syncing". Until now this could never
+					// take effect: the auto-pin below compared the post against a snapshot
+					// that only a sync refreshes, and a sync skips pinned events, so once a
+					// pinned event had been edited the snapshot was stale forever and the
+					// pin came straight back on the same save. Re-base the snapshot on what
+					// is stored now so this save cannot re-pin itself; the next sync adopts
+					// the feed's values, and a later hand edit still auto-pins as before.
+					update_post_meta( $post_id, Meta::FB_SNAPSHOT, Event_Ingest::snapshot_post( $post_id ) );
+				} else {
+					// Auto-pin on edit: if the maintainer changed a synced field but left
+					// the pin off, pin it anyway so their edit isn't reverted by the next
+					// sync. Only reached when the pin was already off, so it can no longer
+					// override a deliberate untick.
+					$snap = (string) get_post_meta( $post_id, Meta::FB_SNAPSHOT, true );
+					if ( '' !== $snap && $snap !== Event_Ingest::snapshot_post( $post_id ) ) {
+						update_post_meta( $post_id, Meta::SYNC_LOCKED, 1 );
+					}
 				}
 			}
 		}
