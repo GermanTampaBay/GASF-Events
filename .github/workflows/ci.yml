@@ -1,0 +1,156 @@
+# CI for GASF Events.
+#
+# Every push and pull request:
+#   lint        php -l on every file, on every PHP version the plugin supports
+#   unit        tests/run.php on the same versions (warnings and deprecations fail)
+#   integration a throwaway WordPress (@wordpress/env) with the plugin active:
+#               tests/integration/run.php, then real HTTP requests for an event
+#               page, the REST feed (ETag → 304) and calendar.ics, then the PHP
+#               error log must be clean
+#   version     on pull requests that change plugin code, the Version header
+#               must be higher than main's, or the change could never ship
+#
+# Push to main, all of the above green:
+#   release     if v<Version> has no release yet, tag it and publish one with
+#               gasf-events.zip. Sites update from releases (includes/
+#               class-updater.php), so a commit that fails here never reaches them.
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint + unit (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '8.0', '8.1', '8.2', '8.3', '8.4' ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, json
+          coverage: none
+      - name: php -l
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            php -l "$f" >/dev/null || { php -l "$f"; status=1; }
+          done < <(find . -name '*.php' -not -path './.git/*' -print0)
+          exit $status
+      - name: Unit tests
+        run: php tests/run.php
+
+  version:
+    name: Version bumped
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Plugin code changed → Version must go up
+        run: |
+          base="origin/${{ github.base_ref }}"
+          if ! git diff --name-only "$base"...HEAD | grep -qE '^(includes/|templates/|assets/|admin/|gasf-events\.php|uninstall\.php)'; then
+            echo "No plugin code changed; no version bump needed."; exit 0
+          fi
+          ver() { sed -n 's/^ \* Version:[[:space:]]*\([0-9][0-9a-z.\-]*\).*/\1/p' | head -1; }
+          old=$(git show "$base:gasf-events.php" | ver)
+          new=$(ver < gasf-events.php)
+          echo "main: $old  this PR: $new"
+          if [ "$old" = "$new" ] || [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1)" != "$new" ]; then
+            echo "::error file=gasf-events.php::Plugin code changed but Version ($new) is not higher than main's ($old). Bump it, or sites will never be offered this change."
+            exit 1
+          fi
+
+  integration:
+    name: Integration (WordPress)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Start WordPress
+        run: npx -y @wordpress/env@11.17.0 start
+      - name: Pretty permalinks
+        run: |
+          npx -y @wordpress/env@11.17.0 run cli wp rewrite structure '/%postname%/' --hard
+          npx -y @wordpress/env@11.17.0 run cli wp rewrite flush --hard
+      - name: Plugin is active
+        run: npx -y @wordpress/env@11.17.0 run cli wp plugin is-active GASF-Events
+      - name: Integration tests
+        run: npx -y @wordpress/env@11.17.0 run cli wp eval-file wp-content/plugins/GASF-Events/tests/integration/run.php
+      - name: Real HTTP requests
+        run: |
+          set -euo pipefail
+          base=http://localhost:8888
+          url=$(npx -y @wordpress/env@11.17.0 run cli wp post list --post_type=gasf_event --post_status=publish --orderby=ID --order=ASC --posts_per_page=1 --field=url 2>/dev/null | grep -o 'http[^[:space:]]*' | head -1)
+          echo "event page: $url"
+          page=$(curl -fsS "$url")
+          grep -q 'property="og:title"' <<<"$page" || { echo "::error::event page has no og:title"; exit 1; }
+          grep -q 'application/ld+json' <<<"$page" || { echo "::error::event page has no JSON-LD"; exit 1; }
+          api="$base/?rest_route=/gasf-events/v1/events&limit=1&fields=id,title"
+          etag=$(curl -fsS -D - -o /dev/null "$api" | tr -d '\r' | awk -F': ' 'tolower($1)=="etag"{print $2}')
+          [ -n "$etag" ] || { echo "::error::REST feed sent no ETag"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $etag" "$api")
+          [ "$code" = "304" ] || { echo "::error::If-None-Match returned $code, expected 304"; exit 1; }
+          # No -L: the feed must answer 200 itself. Calendar clients poll this URL
+          # and not all of them follow redirects.
+          ics=$(mktemp)
+          read -r code ctype < <(curl -sS -o "$ics" -w '%{http_code} %{content_type}\n' "$base/events/calendar.ics")
+          [ "$code" = "200" ] || { echo "::error::calendar.ics returned $code, expected 200"; curl -sSI "$base/events/calendar.ics"; exit 1; }
+          [[ "$ctype" == text/calendar* ]] || { echo "::error::calendar.ics Content-Type is '$ctype'"; exit 1; }
+          grep -q 'BEGIN:VCALENDAR' "$ics" || { echo "::error::calendar.ics is not a calendar"; head -c 500 "$ics"; exit 1; }
+          echo "event page, REST ETag/304 and calendar.ics OK"
+      - name: PHP error log is clean
+        if: always()
+        run: |
+          log=$(npx -y @wordpress/env@11.17.0 run cli cat wp-content/debug.log 2>/dev/null || true)
+          bad=$(grep -E 'PHP (Warning|Notice|Deprecated|Fatal|Parse)' <<<"$log" | grep '/plugins/GASF-Events/' || true)
+          if [ -n "$bad" ]; then echo "$bad"; echo "::error::PHP warnings from the plugin (above)"; exit 1; fi
+          echo "no plugin warnings in debug.log"
+
+  release:
+    name: Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ lint, integration ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish v<Version> if it is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^ \* Version:[[:space:]]*\([0-9][0-9a-z.\-]*\).*/\1/p' gasf-events.php | head -1)
+          [ -n "$v" ] || { echo "::error::no Version header"; exit 1; }
+          tag="v$v"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag is already released; nothing to do."; exit 0
+          fi
+          # git archive honours .gitattributes export-ignore (no tests/, no .github/),
+          # and the prefix gives the zip the folder name WordPress installs into.
+          git archive --format=zip --prefix=GASF-Events/ -o gasf-events.zip HEAD
+          unzip -l gasf-events.zip | grep -q 'GASF-Events/gasf-events.php'
+          unzip -l gasf-events.zip | grep -q 'GASF-Events/assets/js/vendor/alpine.min.js'
+          gh release create "$tag" gasf-events.zip --target "$GITHUB_SHA" --title "$tag" --generate-notes
+          echo "Released $tag"

@@ -269,6 +269,87 @@ if ( ! function_exists( 'gasf_hero_recurring_active' ) && function_exists( 'gasf
 		}
 	}
 
+	/* ============== built-in rule: every FC Bayern game (v0.37.1) ============== */
+	/*
+	 * Each FC Bayern match is its own event with its own opponent, date and
+	 * cover, so no exact-title rule can cover them. This installs ONE
+	 * "title contains FC Bayern" rule with no image of its own: each game's
+	 * cover becomes the hero, two days ahead (the default lead), and retires
+	 * when the game ends. An event with no cover produces no hero
+	 * (gasf_hero_recurring_entry() returns null), so the home page never shows
+	 * a broken or generic banner for a game.
+	 *
+	 * Runs once. The flag is set whatever happened, so a maintainer who later
+	 * edits, disables or deletes the rule on the Recurring Heroes screen keeps
+	 * that decision; nothing here will put it back.
+	 */
+	if ( ! defined( 'GASF_HERO_FCB_SEEDED' ) ) { define( 'GASF_HERO_FCB_SEEDED', 'gasf_hero_recurring_fcb_seeded' ); }
+
+	/** The rule as the club asked for it. */
+	function gasf_hero_recurring_fcb_defaults() {
+		return array(
+			'title'        => 'FC Bayern',
+			'match'        => 'contains',
+			'image_id'     => 0,  // each game's own cover
+			'image_url'    => '', // click → that game's own event page
+			'max_width'    => 450,
+			'caption'      => "Tampa Bay's home for the official FC Bayern München fan club.",
+			'button_label' => 'Click for more info',
+			'button_url'   => 'https://germantampabay.com/fcbmc/',
+			'lead_days'    => GASF_HERO_DEFAULT_LEAD_DAYS,
+			'enabled'      => 1,
+		);
+	}
+
+	/**
+	 * Install the FC Bayern rule, once.
+	 *
+	 * If a "title contains" rule for FC Bayern already exists (v0.34.0 made
+	 * that possible from the admin screen, and its help text suggested
+	 * "FC Bayern v"), it is kept as the rule rather than duplicated: two rules
+	 * matching the same games would compete for the slot. Only its BLANK
+	 * caption / button fields are filled in, so text somebody typed on purpose
+	 * is never overwritten. Its match text is left alone.
+	 *
+	 * @return string 'added' | 'filled' | 'kept' | 'skipped' (already ran)
+	 */
+	function gasf_hero_recurring_seed_fcbayern() {
+		if ( get_option( GASF_HERO_FCB_SEEDED ) ) {
+			return 'skipped';
+		}
+		$want = gasf_hero_recurring_fcb_defaults();
+		$defs = gasf_hero_recurring_get();
+		$out  = 'added';
+		$hit  = false;
+		foreach ( $defs as &$d ) {
+			if ( 'contains' === gasf_hero_recurring_match_mode( $d ) && false !== stripos( (string) ( $d['title'] ?? '' ), 'fc bayern' ) ) {
+				$hit     = true;
+				$changed = false;
+				foreach ( array( 'caption', 'button_label', 'button_url' ) as $k ) {
+					if ( '' === trim( (string) ( $d[ $k ] ?? '' ) ) ) {
+						$d[ $k ] = $want[ $k ];
+						$changed = true;
+					}
+				}
+				$out = $changed ? 'filled' : 'kept';
+				break;
+			}
+		}
+		unset( $d );
+		if ( ! $hit ) {
+			$defs[] = array_merge( array( 'id' => 'rh_fcbayern' ), $want );
+		}
+		if ( 'kept' !== $out ) {
+			gasf_hero_recurring_save( $defs );
+			// Queue the home-page cache purges for the next game right away,
+			// rather than waiting up to an hour for the scheduler's next tick.
+			gasf_hero_recurring_schedule_purges();
+		}
+		update_option( GASF_HERO_FCB_SEEDED, $out, false );
+		return $out;
+	}
+	add_action( 'init', 'gasf_hero_recurring_seed_fcbayern', 20 );
+
 	/* ============================ admin screen =========================== */
 	add_action( 'admin_menu', function () {
 		$parent = 'edit.php?post_type=' . ( defined( 'GASF_EVENTS_CPT' ) ? GASF_EVENTS_CPT : 'gasf_event' );

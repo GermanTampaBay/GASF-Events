@@ -33,6 +33,13 @@ final class Event_Duplicate {
 	 * carries no feed identity. Then the sync bookkeeping that only means
 	 * anything next to that identity, the series links, and the original's
 	 * audience numbers.
+	 *
+	 * Outbound publish state is excluded for the same reason as provenance:
+	 * `_gasf_published` holds the ORIGINAL's Eventbrite id, and Syndication
+	 * re-pushes on every save of a post that carries it. A copy that inherited
+	 * it would unpublish the original's listing the first time the draft was
+	 * saved (reconcile() removes non-public events) and overwrite it with the
+	 * copy's title and dates once published.
 	 */
 	const SKIP_META = [
 		Meta::SOURCE,
@@ -43,11 +50,15 @@ final class Event_Duplicate {
 		Meta::FB_MISSING,
 		Meta::FB_SNAPSHOT,
 		Meta::SYNC_LOCKED,
+		Meta::PUBLISHED,
+		Meta::PUBLISH_INTENT,
 		Meta::SERIES_ID,
 		Meta::SERIES_ROLE,
 		Meta::REPEAT,
 		Meta::REPEAT_UNTIL,
 		Meta::REPEAT_COUNT,
+		Meta::SERIES_SLOT,
+		Meta::SERIES_CUSTOMIZED,
 		Meta::VIEWS,
 		Meta::VIEWS_KIOSK,
 		Meta::VIEWS_DAILY,

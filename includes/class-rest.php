@@ -47,7 +47,18 @@ final class Rest {
 		'id', 'title', 'slug', 'url', 'start', 'end', 'all_day', 'status',
 		'image', 'description', 'organizer', 'venue', 'series_id', 'source', 'modified',
 		'tv_input', 'tv_channel',
+		// v0.37.0 — display-oriented fields so the kiosk and road sign can render
+		// what the site renders. Appended, never reordered (frozen contract).
+		'hide_time', 'hide_end', 'status_reason', 'online_link', 'more_info_url', 'more_info_title',
+		'cost', 'is_multiday', 'icon', 'color', 'has_cover', 'images',
+		'featured', 'priority', 'short_title', 'sign_text',
 	];
+
+	/** Statuses `?status=` accepts; `scheduled` is the stored empty string. */
+	const STATUS_NAMES = [ 'scheduled', 'cancelled', 'postponed', 'sold_out', 'online_only' ];
+
+	/** Image sizes carried by the `images` field, smallest first. */
+	const IMAGE_SIZES = [ 'thumbnail', 'medium', 'large', 'full' ];
 
 	/**
 	 * Named `?event=` shortcuts. Each resolves to the title text configured in
@@ -71,6 +82,63 @@ final class Rest {
 	public function register_hooks(): void {
 		add_action( 'rest_api_init', [ $this, 'routes' ] );
 		add_action( 'before_delete_post', [ __CLASS__, 'record_tombstone' ], 10, 2 );
+		add_filter( 'rest_pre_serve_request', [ __CLASS__, 'serve_304' ], 10, 2 );
+	}
+
+	/**
+	 * A 304 has no body. WP_REST_Server has already sent the status and
+	 * headers by the time this filter runs; returning true stops it echoing
+	 * the JSON-encoded null that would otherwise follow.
+	 */
+	public static function serve_304( $served, $result ) {
+		if ( $result instanceof \WP_REST_Response && 304 === $result->get_status() ) {
+			return true;
+		}
+		return $served;
+	}
+
+	/**
+	 * Conditional GET for the list and single routes.
+	 *
+	 * The host rewrites Cache-Control to no-store under /wp-json, so nothing
+	 * between the kiosk, the road sign and the database caches these
+	 * responses (REST-API.md, "Response headers"). What the plugin controls
+	 * is validation: an ETag over the exact payload and Last-Modified from the
+	 * newest post in it. A client that sends If-None-Match (or
+	 * If-Modified-Since) back gets a bodiless 304 when nothing changed, which
+	 * turns a poll into a few hundred bytes. The query still runs — only the
+	 * transfer is saved — but that is the half the client can feel.
+	 *
+	 * @param array|null $payload What the response carries (used for the ETag).
+	 * @param array      $posts   The WP_Post objects behind it (Last-Modified).
+	 */
+	private static function with_validators( \WP_REST_Response $resp, $payload, array $posts ): \WP_REST_Response {
+		$etag = '"' . md5( (string) wp_json_encode( $payload ) ) . '"';
+		$resp->header( 'ETag', $etag );
+
+		$latest = 0;
+		foreach ( $posts as $p ) {
+			$latest = max( $latest, (int) get_post_modified_time( 'U', true, $p ) );
+		}
+		if ( $latest ) {
+			$resp->header( 'Last-Modified', gmdate( 'D, d M Y H:i:s', $latest ) . ' GMT' );
+		}
+
+		$not_modified = false;
+		$inm = isset( $_SERVER['HTTP_IF_NONE_MATCH'] ) ? trim( (string) wp_unslash( $_SERVER['HTTP_IF_NONE_MATCH'] ) ) : '';
+		if ( '' !== $inm ) {
+			// "W/" marks a weak validator; the hash underneath is what matters.
+			$offered      = array_map( static fn( $t ) => trim( str_replace( 'W/', '', $t ) ), explode( ',', $inm ) );
+			$not_modified = in_array( $etag, $offered, true ) || in_array( '*', $offered, true );
+		} elseif ( $latest && isset( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) ) {
+			$ims          = strtotime( (string) wp_unslash( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) );
+			$not_modified = false !== $ims && $ims >= $latest;
+		}
+		if ( $not_modified ) {
+			$resp->set_status( 304 );
+			$resp->set_data( null );
+		}
+		return $resp;
 	}
 
 	public function routes(): void {
@@ -94,6 +162,10 @@ final class Rest {
 				'order'         => [ 'default' => 'asc', 'sanitize_callback' => 'sanitize_text_field' ],
 				'fields'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
 				'updated_since' => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'status'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'featured'      => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'source'        => [ 'sanitize_callback' => 'sanitize_key' ],
+				'series_id'     => [ 'sanitize_callback' => 'sanitize_text_field' ],
 			],
 			'callback'            => [ $this, 'events' ],
 		] );
@@ -132,6 +204,10 @@ final class Rest {
 				'order'         => [ 'default' => 'asc', 'sanitize_callback' => 'sanitize_text_field' ],
 				'fields'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
 				'updated_since' => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'status'        => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'featured'      => [ 'sanitize_callback' => 'sanitize_text_field' ],
+				'source'        => [ 'sanitize_callback' => 'sanitize_key' ],
+				'series_id'     => [ 'sanitize_callback' => 'sanitize_text_field' ],
 			],
 			'callback'            => [ $this, 'range' ],
 		] );
@@ -323,6 +399,14 @@ final class Rest {
 			$meta_query[] = [ 'key' => Meta::END_TS, 'value' => time(), 'type' => 'NUMERIC', 'compare' => '>=' ];
 		}
 
+		$filters = self::resolve_filters( $req );
+		if ( is_wp_error( $filters ) ) {
+			return $filters;
+		}
+		foreach ( $filters as $clause ) {
+			$meta_query[] = $clause;
+		}
+
 		$args = [
 			'post_type'           => GASF_EVENTS_CPT,
 			'post_status'         => 'publish',
@@ -356,7 +440,7 @@ final class Rest {
 		$resp = new \WP_REST_Response( $data );
 		$resp->header( 'X-GASF-Count', (string) count( $data ) );
 		$resp->header( 'Cache-Control', 'public, max-age=120' );
-		return $resp;
+		return self::with_validators( $resp, $data, $q->posts );
 	}
 
 	public function single( \WP_REST_Request $req ) {
@@ -368,7 +452,8 @@ final class Rest {
 		if ( ! $e || 'publish' !== get_post_status( $e->id() ) ) {
 			return new \WP_REST_Response( [ 'error' => 'not_found' ], 404 );
 		}
-		return new \WP_REST_Response( $this->to_json( $e, $fields ) );
+		$data = $this->to_json( $e, $fields );
+		return self::with_validators( new \WP_REST_Response( $data ), $data, [ $e->post() ] );
 	}
 
 	/**
@@ -397,6 +482,11 @@ final class Rest {
 		$has_limit = null !== $req['limit'] && '' !== (string) $req['limit'];
 		$limit     = $has_limit ? min( 500, max( 1, (int) $req['limit'] ) ) : 500;
 
+		// The checkpoint is taken BEFORE the queries run. Taken afterwards, an
+		// event modified while they ran sat between the two and was never
+		// reported: the consumer's next `since` had already moved past it.
+		$now = time();
+
 		$common = [
 			'post_type'           => GASF_EVENTS_CPT,
 			'posts_per_page'      => $limit,
@@ -404,10 +494,15 @@ final class Rest {
 			'order'               => 'ASC',
 			'no_found_rows'       => true,
 			'ignore_sticky_posts' => true,
+			// Inclusive, because a truncated page hands back the last item's own
+			// modified time as the checkpoint (below): anything else modified in
+			// that same second must be picked up by the next poll, even at the
+			// cost of repeating the item itself. Delivery is at-least-once;
+			// consumers key on id, so a repeat is harmless and a gap is not.
 			'date_query'          => [ [
 				'column'    => 'post_modified_gmt',
 				'after'     => gmdate( 'Y-m-d H:i:s', $since ),
-				'inclusive' => false,
+				'inclusive' => true,
 			] ],
 		];
 
@@ -422,19 +517,39 @@ final class Rest {
 			'fields'      => 'ids',
 		] );
 
+		// A full page may have more behind it. The old response said nothing and
+		// still advanced `now`, so a feed run or migration that touched more than
+		// $limit events lost everything past the cap for good. When either list
+		// is full, the checkpoint becomes the oldest last-item time instead, so
+		// the next poll resumes there; `truncated` tells the consumer to poll
+		// again straight away rather than wait for its usual interval.
+		$truncated = false;
+		foreach ( [ $updated->posts, $gone->posts ] as $list ) {
+			if ( count( $list ) >= $limit ) {
+				$truncated = true;
+				$last_ts   = (int) get_post_modified_time( 'U', true, end( $list ) );
+				// If the whole page sits inside the checkpoint's own second, handing
+				// that second back again would return the same page forever. Step
+				// past it instead. More than $limit events modified within one
+				// second is now the only way to lose one, and limit goes up to 500.
+				$now = min( $now, $last_ts > $since ? $last_ts : $since + 1 );
+			}
+		}
+
 		$removed = array_map( 'intval', $gone->posts );
 		foreach ( (array) get_option( self::TOMBSTONES, [] ) as $id => $ts ) {
-			if ( (int) $ts > $since ) {
+			if ( (int) $ts >= $since ) {
 				$removed[] = (int) $id;
 			}
 		}
 		$removed = array_values( array_unique( $removed ) );
 
 		$resp = new \WP_REST_Response( [
-			'since'   => gmdate( 'c', $since ),
-			'now'     => gmdate( 'c' ),
-			'updated' => array_map( fn( $p ) => $this->to_json( new Event( $p ), $fields ), $updated->posts ),
-			'removed' => $removed,
+			'since'     => gmdate( 'c', $since ),
+			'now'       => gmdate( 'c', $now ),
+			'updated'   => array_map( fn( $p ) => $this->to_json( new Event( $p ), $fields ), $updated->posts ),
+			'removed'   => $removed,
+			'truncated' => $truncated,
 		] );
 		$resp->header( 'X-GASF-Count', (string) count( $updated->posts ) );
 		$resp->header( 'X-GASF-Removed', (string) count( $removed ) );
@@ -567,8 +682,139 @@ final class Rest {
 				return $e->tv_input();
 			case 'tv_channel':
 				return $e->tv_channel();
+			// Display fields (v0.37.0): what the site honours when rendering.
+			case 'hide_time':
+				return $e->hide_time();
+			case 'hide_end':
+				return $e->hide_end();
+			case 'status_reason':
+				return $e->status_reason();
+			case 'online_link':
+				return $e->online_link();
+			case 'more_info_url':
+				return $e->more_info_url();
+			case 'more_info_title':
+				// Only meaningful next to a URL; the model's label fallback
+				// ("More info") would otherwise appear on every event.
+				return '' !== $e->more_info_url() ? $e->more_info_title() : '';
+			case 'cost':
+				return $e->cost();
+			case 'is_multiday':
+				return $e->is_multiday();
+			case 'icon':
+				return $e->icon();
+			case 'color':
+				return $e->color();
+			case 'has_cover':
+				return has_post_thumbnail( $e->post() );
+			case 'images':
+				return self::images( $e );
+			// Promotion fields, set per event under "Road sign & promotion".
+			case 'featured':
+				return $e->is_featured();
+			case 'priority':
+				return $e->priority();
+			case 'short_title':
+				return $e->short_title();
+			case 'sign_text':
+				return $e->sign_text();
 		}
 		return null; // unreachable: resolve_fields() rejects unknown names
+	}
+
+	/**
+	 * Every registered size of the cover (or the default image) with its
+	 * pixel dimensions, so a 1080p sign can ask for `full` and a card grid for
+	 * `medium` instead of guessing from one `large` URL. When only the bundled
+	 * SVG placeholder is available the dimensions are 0 — pair with has_cover.
+	 *
+	 * @return array<string,array{url:string,width:int,height:int}>
+	 */
+	private static function images( Event $e ): array {
+		$id  = has_post_thumbnail( $e->post() ) ? (int) get_post_thumbnail_id( $e->post() ) : Settings::default_image_id();
+		$out = [];
+		foreach ( self::IMAGE_SIZES as $size ) {
+			$src = $id ? wp_get_attachment_image_src( $id, $size ) : false;
+			$out[ $size ] = $src
+				? [ 'url' => (string) $src[0], 'width' => (int) $src[1], 'height' => (int) $src[2] ]
+				: [ 'url' => Settings::default_image_url( $size ), 'width' => 0, 'height' => 0 ];
+		}
+		return $out;
+	}
+
+	/**
+	 * Optional narrowing filters shared by /events and /events/{x-y}:
+	 *
+	 *   status=cancelled,postponed   only these
+	 *   status=-cancelled            everything but these (same either/or rule as fields)
+	 *   featured=1 | 0
+	 *   source=facebook | ics | manual
+	 *   series_id=<id>
+	 *
+	 * Returned as meta_query clauses, or a WP_Error naming the bad value.
+	 *
+	 * @return array|\WP_Error
+	 */
+	private static function resolve_filters( \WP_REST_Request $req ) {
+		$clauses = [];
+
+		$status = trim( (string) $req['status'] );
+		if ( '' !== $status ) {
+			$names   = array_values( array_filter( array_map( 'trim', explode( ',', $status ) ), 'strlen' ) );
+			$negated = array_filter( $names, static fn( $n ) => str_starts_with( $n, '-' ) );
+			if ( $negated && count( $negated ) !== count( $names ) ) {
+				return new \WP_Error( 'gasf_status_mixed', __( 'The status parameter takes either a list to include or a list of -excluded names, not both.', 'gasf-events' ), [ 'status' => 400 ] );
+			}
+			$clean   = array_map( static fn( $n ) => ltrim( $n, '-' ), $names );
+			$unknown = array_values( array_diff( $clean, self::STATUS_NAMES ) );
+			if ( $unknown ) {
+				return new \WP_Error(
+					'gasf_status_unknown',
+					sprintf( /* translators: 1: unknown names, 2: valid names */ __( 'Unknown status: %1$s. Valid: %2$s.', 'gasf-events' ), implode( ', ', $unknown ), implode( ', ', self::STATUS_NAMES ) ),
+					[ 'status' => 400, 'unknown' => $unknown, 'available' => self::STATUS_NAMES ]
+				);
+			}
+			$include = $negated ? array_values( array_diff( self::STATUS_NAMES, $clean ) ) : $clean;
+			$or      = [ 'relation' => 'OR' ];
+			if ( in_array( 'scheduled', $include, true ) ) {
+				// Scheduled is stored as '' and, on older rows, not stored at all.
+				$or[] = [ 'key' => Meta::STATUS, 'compare' => 'NOT EXISTS' ];
+				$or[] = [ 'key' => Meta::STATUS, 'value' => '' ];
+			}
+			$named = array_values( array_diff( $include, [ 'scheduled' ] ) );
+			if ( $named ) {
+				$or[] = [ 'key' => Meta::STATUS, 'value' => $named, 'compare' => 'IN' ];
+			}
+			if ( count( $or ) < 2 ) {
+				$or[] = [ 'key' => Meta::STATUS, 'value' => '__none__' ]; // excluded everything: match nothing, honestly
+			}
+			$clauses[] = $or;
+		}
+
+		$featured = trim( (string) $req['featured'] );
+		if ( '' !== $featured ) {
+			$f = filter_var( $featured, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+			if ( null === $f ) {
+				return new \WP_Error( 'gasf_featured_invalid', __( 'featured must be 1 or 0.', 'gasf-events' ), [ 'status' => 400 ] );
+			}
+			$clauses[] = $f
+				? [ 'key' => Meta::FEATURED, 'value' => '1' ]
+				: [ 'relation' => 'OR', [ 'key' => Meta::FEATURED, 'compare' => 'NOT EXISTS' ], [ 'key' => Meta::FEATURED, 'value' => '1', 'compare' => '!=' ] ];
+		}
+
+		$source = trim( (string) $req['source'] );
+		if ( '' !== $source ) {
+			$clauses[] = 'manual' === $source
+				? [ 'relation' => 'OR', [ 'key' => Meta::SOURCE, 'value' => 'manual' ], [ 'key' => Meta::SOURCE, 'compare' => 'NOT EXISTS' ] ]
+				: [ 'key' => Meta::SOURCE, 'value' => $source ];
+		}
+
+		$series = trim( (string) $req['series_id'] );
+		if ( '' !== $series ) {
+			$clauses[] = [ 'key' => Meta::SERIES_ID, 'value' => $series ];
+		}
+
+		return $clauses;
 	}
 
 	/**

@@ -69,6 +69,10 @@ final class Plugin {
 		require_once $dir . 'class-eventbrite.php';
 		require_once $dir . 'class-stats.php';
 		require_once $dir . 'class-rest.php';
+		require_once $dir . 'class-seo.php';
+		require_once $dir . 'class-cache.php';
+		require_once $dir . 'class-health.php';
+		require_once $dir . 'class-webhooks.php';
 		if ( is_admin() ) {
 			require_once $dir . 'class-meta-box.php';
 			require_once $dir . 'class-admin-list.php';
@@ -109,11 +113,17 @@ final class Plugin {
 		( new GBP_Notice() )->register_hooks();
 		( new Syndication() )->register_hooks();
 		( new Stats() )->register_hooks();
+		( new Seo() )->register_hooks();
+		( new Cache() )->register_hooks();
+		( new Health() )->register_hooks();
+		( new Webhooks() )->register_hooks();
+		// Not admin-only: the block editor saves through REST and a scheduled
+		// master publishes from cron, and both must reach the series hooks.
+		( new Series() )->register_hooks();
 
 		if ( is_admin() ) {
 			( new Meta_Box() )->register_hooks();
 			( new Admin_List() )->register_hooks();
-			( new Series() )->register_hooks();
 			( new Feeds_Admin() )->register_hooks();
 			( new Bulk_Actions() )->register_hooks();
 			( new Event_Duplicate() )->register_hooks();
@@ -140,9 +150,16 @@ final class Plugin {
 	 * Deactivation: flush rewrites so the CPT's rules are dropped cleanly.
 	 */
 	public static function deactivate(): void {
+		// Literals rather than class constants: deactivate() runs without boot(),
+		// so Feeds / Hours_Sync / Syndication are not loaded here.
 		wp_clear_scheduled_hook( 'gasf_events_sync' );
 		wp_clear_scheduled_hook( 'gasf_events_drain' );
-		wp_clear_scheduled_hook( 'gasf_hero_recurring_cron' ); // owned by recurring-heroes.php
+		wp_clear_scheduled_hook( 'gasf_events_gbp_push' );      // Hours_Sync::CRON_PUSH
+		wp_clear_scheduled_hook( 'gasf_events_gbp_daily' );     // Hours_Sync::CRON_DAILY
+		wp_clear_scheduled_hook( 'gasf_hero_recurring_cron' );  // owned by recurring-heroes.php
+		wp_clear_scheduled_hook( 'gasf_hero_activate_event' );  // one-off purges, heroes.php
+		wp_clear_scheduled_hook( 'gasf_events_heartbeat' );     // Health::CRON_HOOK
+		wp_clear_scheduled_hook( 'gasf_events_webhook_retry' ); // Webhooks::RETRY_HOOK
 		flush_rewrite_rules();
 	}
 }

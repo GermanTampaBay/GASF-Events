@@ -79,27 +79,25 @@ final class Eventbrite_Destination implements Publish_Destination {
 		$id   = (string) ( $state['id'] ?? '' );
 
 		// Image (best-effort; upload failure shouldn't block the rest of the push).
-		$thumbnail_id = get_post_thumbnail_id( $event->id() );
-		if ( $thumbnail_id ) {
-			$cfg     = Eventbrite::config();
-			$logo_id = ( new Image_Uploader( (string) $cfg['token'] ) )->upload_from_attachment( (int) $thumbnail_id );
-			if ( $logo_id ) {
-				$body['event']['logo_id'] = $logo_id;
-			}
+		// The media id is remembered in the state so an unchanged cover is not
+		// re-uploaded (three HTTP calls) on every save of the event.
+		$logo = $this->logo_for( $event, (array) ( $state['logo'] ?? [] ) );
+		if ( ! empty( $logo['id'] ) ) {
+			$body['event']['logo_id'] = $logo['id'];
 		}
 
 		if ( $id ) {
 			$res = Eventbrite::api( 'POST', "/events/{$id}/", $body );
 			if ( is_wp_error( $res ) ) {
-				return $this->err( $state, $res->get_error_message(), $now );
+				return $this->err( $state, $res->get_error_message(), $now, $logo );
 			}
-			return [ 'id' => $id, 'url' => (string) ( $res['url'] ?? ( $state['url'] ?? '' ) ), 'status' => 'published', 'synced_at' => $now, 'error' => '' ];
+			return [ 'id' => $id, 'url' => (string) ( $res['url'] ?? ( $state['url'] ?? '' ) ), 'status' => 'published', 'synced_at' => $now, 'error' => '', 'logo' => $logo ];
 		}
 
 		$cfg = Eventbrite::config();
 		$res = Eventbrite::api( 'POST', "/organizations/{$cfg['organization_id']}/events/", $body );
 		if ( is_wp_error( $res ) || empty( $res['id'] ) ) {
-			return $this->err( $state, is_wp_error( $res ) ? $res->get_error_message() : 'create failed', $now );
+			return $this->err( $state, is_wp_error( $res ) ? $res->get_error_message() : 'create failed', $now, $logo );
 		}
 		$new_id = (string) $res['id'];
 
@@ -108,13 +106,38 @@ final class Eventbrite_Destination implements Publish_Destination {
 			'ticket_class' => [ 'name' => __( 'General Admission', 'gasf-events' ), 'free' => true, 'quantity_total' => 500 ],
 		] );
 		if ( is_wp_error( $ticket ) ) {
-			return $this->err( [ 'id' => $new_id, 'url' => (string) ( $res['url'] ?? '' ) ], $ticket->get_error_message(), $now );
+			return $this->err( [ 'id' => $new_id, 'url' => (string) ( $res['url'] ?? '' ) ], $ticket->get_error_message(), $now, $logo );
 		}
 		$pub = Eventbrite::api( 'POST', "/events/{$new_id}/publish/" );
 		if ( is_wp_error( $pub ) ) {
-			return $this->err( [ 'id' => $new_id, 'url' => (string) ( $res['url'] ?? '' ) ], $pub->get_error_message(), $now );
+			return $this->err( [ 'id' => $new_id, 'url' => (string) ( $res['url'] ?? '' ) ], $pub->get_error_message(), $now, $logo );
 		}
-		return [ 'id' => $new_id, 'url' => (string) ( $res['url'] ?? '' ), 'status' => 'published', 'synced_at' => $now, 'error' => '' ];
+		return [ 'id' => $new_id, 'url' => (string) ( $res['url'] ?? '' ), 'status' => 'published', 'synced_at' => $now, 'error' => '', 'logo' => $logo ];
+	}
+
+	/**
+	 * The Eventbrite media id for the event's featured image.
+	 *
+	 * Uploads only when the attachment id or its file's mtime differs from
+	 * what the last push recorded; otherwise the remembered id is reused.
+	 * Returns [] when there is no image or the upload failed (the push then
+	 * goes out without a logo, as before).
+	 *
+	 * @return array{att:int,mtime:int,id:string}|array{}
+	 */
+	private function logo_for( Event $event, array $cached ): array {
+		$att = (int) get_post_thumbnail_id( $event->id() );
+		if ( ! $att ) {
+			return [];
+		}
+		$path  = get_attached_file( $att );
+		$mtime = ( $path && file_exists( $path ) ) ? (int) filemtime( $path ) : 0;
+		if ( (int) ( $cached['att'] ?? 0 ) === $att && (int) ( $cached['mtime'] ?? -1 ) === $mtime && '' !== (string) ( $cached['id'] ?? '' ) ) {
+			return $cached;
+		}
+		$cfg     = Eventbrite::config();
+		$logo_id = ( new Image_Uploader( (string) $cfg['token'] ) )->upload_from_attachment( $att );
+		return $logo_id ? [ 'att' => $att, 'mtime' => $mtime, 'id' => (string) $logo_id ] : [];
 	}
 
 	public function remove( array $state ): void {
@@ -127,7 +150,13 @@ final class Eventbrite_Destination implements Publish_Destination {
 	private function build_body( Event $event ): array {
 		$tz        = wp_timezone_string();
 		$start     = $event->start();
-		$end       = $event->end() ?: $start;
+		$end       = $event->end();
+		// Eventbrite requires end > start. Feed events often arrive with no end
+		// (stored as end == start), and that used to be sent as-is, so every one
+		// of them landed in the error column. Give it a default length instead.
+		if ( $start && ( ! $end || $end <= $start ) ) {
+			$end = $start->modify( '+2 hours' );
+		}
 		$utc       = static fn( ?\DateTimeImmutable $d ) => $d ? $d->setTimezone( new \DateTimeZone( 'UTC' ) )->format( 'Y-m-d\TH:i:s\Z' ) : '';
 		$summary   = mb_substr( trim( wp_strip_all_tags( $event->description() ) ), 0, 140 );
 
@@ -143,7 +172,11 @@ final class Eventbrite_Destination implements Publish_Destination {
 		];
 	}
 
-	private function err( array $state, string $msg, int $now ): array {
-		return array_merge( $state, [ 'status' => 'error', 'error' => $msg, 'synced_at' => $now ] );
+	private function err( array $state, string $msg, int $now, array $logo = [] ): array {
+		$out = array_merge( $state, [ 'status' => 'error', 'error' => $msg, 'synced_at' => $now ] );
+		if ( $logo ) {
+			$out['logo'] = $logo; // an upload that succeeded is still worth keeping
+		}
+		return $out;
 	}
 }

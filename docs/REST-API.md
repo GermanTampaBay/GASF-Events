@@ -33,6 +33,10 @@ https://germantampabay.com/wp-json/gasf-events/v1/events
 | `from` | *(now)* | Start of the window. `YYYY-MM-DD`, an ISO datetime, or a unix timestamp. A value that cannot be parsed is a `400`. |
 | `to` | — | End of the window, same formats and the same `400`. |
 | `updated_since` | — | Only events modified after this. Same formats. For incremental sync — but read [Syncing](#syncing) first, because on its own it cannot tell you an event went away. |
+| `status` | *(all)* | Include list (`status=cancelled,postponed`) or exclude list (`status=-cancelled`), not both. Names: `scheduled`, `cancelled`, `postponed`, `sold_out`, `online_only`. Unknown is a `400`. |
+| `featured` | *(all)* | `1` = only events ticked "Featured" in the editor; `0` = only the rest. |
+| `source` | *(all)* | `facebook`, `ics` or `manual`. |
+| `series_id` | *(all)* | All dates of one recurring series. |
 
 Omitting both `from` and `to` gives upcoming events only (anything that has not
 finished yet). Supplying either one switches to an explicit window, so
@@ -46,6 +50,23 @@ finished yet). Supplying either one switches to an explicit window, so
   `no-store` for everything under `/wp-json`, so nothing caches these responses:
   not browsers, not the CDN. Assume every request is a live database hit and
   poll accordingly. Tracked as a config fix, not a plugin one.
+- `ETag` and `Last-Modified` (v0.36.0) — on `/events`, `/events/{x-y}` and
+  `/events/{id}`. Send the `ETag` back as `If-None-Match` (or the date as
+  `If-Modified-Since`) on your next poll and an unchanged result comes back as
+  a bodiless **304**. The database query still runs; the transfer does not.
+  For a kiosk or sign polling every minute this is the difference between a
+  few hundred bytes and the whole payload each time.
+
+```
+GET /events?limit=5&fields=title,start,image
+If-None-Match: "3c6e0b8a9c15224a8228b9a98ca1531d"
+
+HTTP/1.1 304 Not Modified
+ETag: "3c6e0b8a9c15224a8228b9a98ca1531d"
+```
+
+The `ETag` is a hash of the exact payload, so it changes with `fields`, `limit`
+and every other parameter. Keep one per URL.
 
 ---
 
@@ -143,7 +164,8 @@ Every filter composes: `event`, `contains`, `from`, `to`, `order`, `fields` and
 
 ## Choosing fields
 
-By default every event carries all 17 fields. `fields` takes **either** a list to
+By default every event carries all 33 fields (17 through v0.36, 16 more
+appended in v0.37.0). `fields` takes **either** a list to
 include **or** a list of `-` prefixed names to exclude — not both in one request.
 
 **Include only what you name:**
@@ -194,6 +216,22 @@ the order you list them in.
 | `modified` | string | ISO 8601 UTC — pair with `updated_since`. |
 | `tv_input` | string | Kiosk "how to watch" override: `directv`, `googletv`, `roku`, `fire`, or `""` (no override — the kiosk uses its pinned-tile default). Set per event on the GASF-Utilities → Game TV tab. |
 | `tv_channel` | string | Companion to `tv_input`: a DirecTV channel number (e.g. `242`) or an app slug (`fandango`, `paramount`, `youtube`). `""` when unset. |
+| `hide_time` | bool | The site shows the date only. Honour it: `start`/`end` still carry the time, but the maintainer chose not to show it. |
+| `hide_end` | bool | The site shows the start time only. |
+| `status_reason` | string | The note next to a cancelled/postponed status ("rain"). `""` when none. |
+| `online_link` | string | Where to send people for an `online_only` event. |
+| `more_info_url` | string | Ticket or details link. `""` when none. |
+| `more_info_title` | string | Its label. `""` when there is no link. |
+| `cost` | number | Price in USD, `0` when free or unset. |
+| `is_multiday` | bool | Start and end fall on different days. |
+| `icon` | string | The emoji the calendar shows for this event. |
+| `color` | string | Its hex colour (`#1e5fad`). Match the site's look without re-deriving it. |
+| `has_cover` | bool | A real cover image is set. `false` means `image`/`images` carry the site default or the placeholder. |
+| `images` | object | `{ thumbnail, medium, large, full }`, each `{ url, width, height }`. A 1080p sign wants `full`; a card grid wants `medium`. Width/height are `0` when only the SVG placeholder exists. |
+| `featured` | bool | Ticked "Featured" under Road sign & promotion in the editor. |
+| `priority` | int | 0–100, higher first among featured events. The feed does not sort by it; you do. |
+| `short_title` | string | The sign headline, up to 40 characters. **Falls back to `title`** when none is set, so it is always usable. |
+| `sign_text` | string | The line under the headline ("Sat 7 pm · $5 at the door"), up to 80 characters. `""` when none. |
 
 `image` and `description` are the two expensive fields: `description` expands
 shortcodes and `image` hits the attachment tables. Leaving them out of `fields`
@@ -238,7 +276,8 @@ anyone touching them.
   "since":   "2026-08-01T12:00:00+00:00",
   "now":     "2026-08-29T18:30:00+00:00",
   "updated": [ { "id": 16275, "title": "Biergarten", "…": "…" } ],
-  "removed": [ 16111, 16240 ]
+  "removed": [ 16111, 16240 ],
+  "truncated": false
 }
 ```
 
@@ -246,7 +285,7 @@ anyone touching them.
 |---|---|---|
 | `since` | *(required)* | Same date formats as `from`. Missing or unparseable is a `400`. |
 | `fields` | *(all)* | Applies to `updated` only, same rules as elsewhere. |
-| `limit` | `500` | 1–500, applied to `updated` and `removed` separately. |
+| `limit` | `500` | 1–500, applied to `updated` and `removed` separately. When either list fills up, `truncated` is `true` and `now` steps back to the last item's own modified time instead of the current time, so nothing past the cap is lost — poll again right away. |
 
 - **`updated`** — full event objects, published, modified after `since`, ordered
   **oldest-modified first** so a consumer that stops halfway can resume from the
@@ -256,6 +295,15 @@ anyone touching them.
   an event you are being told to forget has no useful payload.
 - **`now`** — the checkpoint for your next call. Store it and pass it back as
   `since`; do not use your own clock, which may not agree with the server's.
+  It is taken before the lookup runs, and on a truncated page it is the
+  modified time of the last item returned, so it can be earlier than the
+  moment you received the response. That is deliberate.
+- **`truncated`** — `true` when a list hit `limit`. Treat it as "there is more":
+  call again immediately with the returned `now`.
+- **Delivery is at-least-once.** `since` is inclusive, so an event modified in
+  the exact second of a checkpoint can appear in two consecutive responses.
+  Key your cache on `id` and a repeat costs nothing; the alternative was
+  occasionally missing one, which cannot be recovered from.
 
 Deletions are remembered for **90 days**. A consumer that goes quiet for longer
 than that should do a full `/events` read rather than trusting a delta.
@@ -292,6 +340,9 @@ checkpoint and is never shared.
 | `gasf_range_backwards` | A range ended before it started, e.g. `9-2`. |
 | `gasf_range_too_wide` | A range asked for more than 20 events. |
 | `gasf_range_with_count` | A range was combined with `limit` or `instance`. |
+| `gasf_status_unknown` | A name in `status` isn't a real status. |
+| `gasf_status_mixed` | `status` mixed plain and `-` prefixed names. |
+| `gasf_featured_invalid` | `featured` was neither `1` nor `0`. |
 
 ---
 
@@ -417,6 +468,82 @@ A missing event returns `404` with `{ "ok": false }`.
 The browser beacon is injected on single event pages as `window.GASF_VIEW`
 (`{ id, url, ctx }`), and is deliberately not injected for logged-in editors so
 your own visits do not inflate the numbers.
+
+---
+
+## Webhooks
+
+Polling tells you about a cancellation on your next poll. A webhook tells you
+now. Register a receiver URL under **Events → Webhooks** and the site POSTs to
+it whenever the calendar changes: an event published, edited while published,
+cancelled, unpublished, trashed, deleted, or drafted by the feed sync.
+
+One request that changes many events (a feed run) is **one delivery** listing
+them all. Deliveries are **at-least-once**: a failed POST (non-2xx, timeout,
+unreachable) is retried after 2, 4, 8, 16 and 32 minutes, then dropped and
+the failure shown on the Webhooks and Health screens. Keep polling
+`/events/changes` as the safety net; the webhook is the fast path.
+
+### Request
+
+```
+POST https://your-receiver/gasf-webhook
+Content-Type: application/json
+User-Agent: GASF-Events/0.37.0 (+https://germantampabay.com/)
+X-GASF-Event: events.changed
+X-GASF-Delivery: 7f3c…-uuid
+X-GASF-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the webhook's secret>
+```
+
+```json
+{
+  "event": "events.changed",
+  "sent_at": "2026-11-07T18:30:12+00:00",
+  "site": "https://germantampabay.com/",
+  "changes": [
+    { "action": "updated", "id": 16275, "title": "Euchre Night", "short_title": "Euchre Night",
+      "start": "2026-11-12T19:00:00-05:00", "end": "2026-11-12T22:00:00-05:00", "all_day": false,
+      "status": "scheduled", "featured": true, "priority": 40,
+      "url": "https://germantampabay.com/events/euchre-night/", "modified": "2026-11-07T18:30:11+00:00" },
+    { "action": "removed", "id": 16111, "post_status": "draft" }
+  ],
+  "changes_url": "https://germantampabay.com/wp-json/gasf-events/v1/events/changes",
+  "events_url":  "https://germantampabay.com/wp-json/gasf-events/v1/events"
+}
+```
+
+- **`updated`** carries a compact event (the `id, title, short_title, start,
+  end, all_day, status, featured, priority, url, modified` fields, as on
+  `/events`) so a receiver can act without a round trip. For anything else,
+  fetch `/events/{id}`.
+- **`removed`** is an id plus the status that took it off the feed (`draft`,
+  `trash`, `private`, or `deleted`). Drop it.
+- **`ping`** (`X-GASF-Event: ping`) is sent by the Test button, with one
+  sample `updated` change (the next upcoming event) so the whole path can be
+  checked. Treat it like any delivery, or ignore it by event name.
+
+### Verifying the signature
+
+Compute HMAC-SHA256 over the **raw request body bytes** with the secret shown
+on the Webhooks screen, and compare in constant time:
+
+```php
+$expected = 'sha256=' . hash_hmac( 'sha256', file_get_contents( 'php://input' ), $secret );
+if ( ! hash_equals( $expected, $_SERVER['HTTP_X_GASF_SIGNATURE'] ?? '' ) ) { http_response_code( 401 ); exit; }
+```
+
+```python
+expected = "sha256=" + hmac.new(secret.encode(), request.data, hashlib.sha256).hexdigest()
+if not hmac.compare_digest(expected, request.headers.get("X-GASF-Signature", "")): abort(401)
+```
+
+Reply with any **2xx** within 8 seconds. Do the real work after replying, or
+a slow receiver looks like a failed one and gets the same delivery again.
+`X-GASF-Delivery` is stable across retries, so it is the key for de-duplication.
+
+The receiver must be reachable from the web host over http(s). A device on the
+club's LAN is not; put a small relay on a public host, or have the sign poll
+`/events/changes`.
 
 ---
 

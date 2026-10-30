@@ -86,6 +86,12 @@ final class Admin_List {
 						admin_url( 'edit.php' )
 					);
 					echo '<a href="' . esc_url( $url ) . '" title="' . esc_attr__( 'Show all events in this series', 'gasf-events' ) . '" style="color:#46810b;font-size:18px;text-decoration:none;">&#10003;</a>';
+					$role = (string) get_post_meta( $post_id, Meta::SERIES_ROLE, true );
+					if ( 'master' === $role ) {
+						echo '<br><small style="color:#646970;">' . esc_html__( 'first date', 'gasf-events' ) . '</small>';
+					} elseif ( Series::is_customized( $post_id ) ) {
+						echo '<br><small style="color:#996800;" title="' . esc_attr__( 'Edited by hand: changes to the whole series skip this date.', 'gasf-events' ) . '">' . esc_html__( 'edited', 'gasf-events' ) . '</small>';
+					}
 				} else {
 					echo '<span style="color:#ccc;">—</span>';
 				}
@@ -106,6 +112,11 @@ final class Admin_List {
 					echo '<span style="background:#555;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;">ICS</span>';
 				} else {
 					echo esc_html__( 'Manual', 'gasf-events' );
+				}
+				// The pin is invisible until it bites ("why didn't Facebook's change
+				// come through?"), so it is shown wherever the source is.
+				if ( $event->is_synced() && get_post_meta( $post_id, Meta::SYNC_LOCKED, true ) ) {
+					echo ' <span title="' . esc_attr__( 'Pinned: the feed sync does not overwrite this event.', 'gasf-events' ) . '">📌</span>';
 				}
 				break;
 
@@ -161,6 +172,8 @@ final class Admin_List {
 			<option value="facebook" <?php selected( $source, 'facebook' ); ?>><?php esc_html_e( 'Facebook', 'gasf-events' ); ?></option>
 			<option value="ics" <?php selected( $source, 'ics' ); ?>><?php esc_html_e( 'iCal feed', 'gasf-events' ); ?></option>
 		</select>
+		<?php $pinned = ! empty( $_GET['gasf_pinned'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>
+		<label style="margin-left:4px;"><input type="checkbox" name="gasf_pinned" value="1" <?php checked( $pinned ); ?>> <?php esc_html_e( 'Pinned only', 'gasf-events' ); ?></label>
 		<?php
 	}
 
@@ -218,6 +231,10 @@ final class Admin_List {
 			$meta_query[] = [ 'key' => Meta::SOURCE, 'value' => 'facebook' ];
 		} elseif ( 'ics' === $source ) {
 			$meta_query[] = [ 'key' => Meta::SOURCE, 'value' => 'ics' ];
+		}
+
+		if ( ! empty( $_GET['gasf_pinned'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$meta_query[] = [ 'key' => Meta::SYNC_LOCKED, 'value' => '1' ];
 		}
 
 		// "Show all events in this series" (from the Recurring-column link).

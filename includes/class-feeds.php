@@ -197,7 +197,15 @@ final class Feeds {
 			if ( ! empty( $feed['dest_gasf'] ) ) {
 				$seen = [];
 				$link_source = ! empty( $feed['link_source'] );
-				foreach ( $fetch['events'] as $ev ) {
+				// The calendar stores flat posts, so a recurring ICS event is
+				// materialised here, one post per date, the way Facebook's
+				// event_times already arrive. Google (below) gets the raw RRULE
+				// instead and must NOT also get these, or it would double up.
+				// Window: the same past grace as Facebook, one year ahead.
+				$gasf_events = ( 'ics' === $source )
+					? ICS_Parser::expand( $fetch['events'], time() - 2 * DAY_IN_SECONDS, time() + YEAR_IN_SECONDS )
+					: $fetch['events'];
+				foreach ( $gasf_events as $ev ) {
 					if ( '' !== $prefix && '-' !== $prefix ) {
 						$ev['title'] = $prefix . ' ' . (string) ( $ev['title'] ?? '' );
 					}
@@ -210,7 +218,7 @@ final class Feeds {
 				}
 				// Fail-safe: a successful-but-EMPTY fetch is inconclusive, never a
 				// signal to draft the whole feed. Only prune when we saw events.
-				if ( $fetch['events'] ) {
+				if ( $gasf_events ) {
 					$stats['drafted'] += Event_Ingest::prune_missing( (string) $feed['id'], $seen, $dry );
 				}
 			}
@@ -295,6 +303,14 @@ final class Feeds {
 			// One summary email per run for anything prune_missing() unpublished
 			// (see class-alerts.php — silent auto-drafts hid a live event once).
 			Alerts::flush();
+			if ( $stats['created'] || $stats['updated'] || $stats['drafted'] ) {
+				/**
+				 * A real run changed the calendar. Cache listens and purges once.
+				 *
+				 * @param array $stats The run's counts.
+				 */
+				do_action( 'gasf_events_feed_run_complete', $stats );
+			}
 		}
 		return $stats;
 	}
@@ -386,11 +402,9 @@ final class Feeds {
 			}
 			$events = [];
 			foreach ( ICS_Parser::parse( wp_remote_retrieve_body( $resp ) ) as $rec ) {
-				$norm = ICS_Parser::to_norm( $rec );
+				$norm = ICS_Parser::to_norm( $rec ); // carries location, rrule, exdates, recurrence_id
 				if ( $norm ) {
-					$norm['location'] = (string) ( $rec['location'] ?? '' );
-					$norm['rrule']    = (string) ( $rec['rrule'] ?? '' );
-					$events[]         = $norm;
+					$events[] = $norm;
 				}
 			}
 			return [ 'events' => $events, 'error' => '' ];

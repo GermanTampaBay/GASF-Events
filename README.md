@@ -25,6 +25,37 @@ pick the next / the one after, plus `limit`, `order`, `from`/`to`,
 `updated_since`, and a `fields` include/exclude list.
 See [`docs/REST-API.md`](docs/REST-API.md).
 
+## Development, tests and releases
+
+**Run the tests** (nothing to install; any PHP 8.0+):
+
+```
+php tests/run.php            # all unit tests
+php tests/run.php Series     # only files whose name contains "Series"
+```
+
+`tests/unit/` covers the logic that needs no database: recurrence maths, ICS
+parsing and expansion, series planning, cross-feed merge matching, the FC
+Bayern hero rule, and repository sanity (every registered asset exists, every
+required file exists). Warnings and deprecations fail a test.
+`tests/integration/run.php` runs inside a real WordPress and is what CI uses to
+check the REST feed, series behaviour against the database, the page and feed
+builders, and that the PHP error log stays clean. It creates events: never run
+it against the live site.
+
+**CI** (`.github/workflows/ci.yml`) runs on every pull request and every push to
+`main`: `php -l` and the unit tests on PHP 8.0–8.4, the integration tests in a
+throwaway WordPress (`@wordpress/env`), and real HTTP requests for an event page,
+the REST feed (ETag → 304) and `calendar.ics`. A pull request that changes
+plugin code must also raise the `Version:` header in `gasf-events.php`.
+
+**Releasing** is the same habit as before: bump `Version:` and merge to `main`.
+When CI is green on `main` it tags `v<Version>` and publishes a GitHub release
+with `gasf-events.zip`. Sites update from **releases**, not from `main`, so a
+commit that fails its tests is never offered to them. A staging copy can follow
+every push instead: `define( 'GASF_EVENTS_UPDATE_CHANNEL', 'main' );` in
+`wp-config.php`. Events → Health shows the installed version and the latest release.
+
 ## Phases
 
 See `docs/ARCHITECTURE.md` §11. P1 (this commit) = plugin scaffold, `gasf_event` model, settings, Event Details meta box, and the All Events list.

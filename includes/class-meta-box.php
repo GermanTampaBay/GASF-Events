@@ -14,6 +14,10 @@ final class Meta_Box {
 
 	const NONCE = 'gasf_events_details_nonce';
 
+	/** Assumed length of an event saved with no end at all (minutes). heroes.php
+	 * already assumes two hours for a feed event with no real end. */
+	const DEFAULT_DURATION_MIN = 120;
+
 	public function register_hooks(): void {
 		add_action( 'add_meta_boxes', [ $this, 'add' ] );
 		add_action( 'save_post_' . GASF_EVENTS_CPT, [ $this, 'save' ], 10, 2 );
@@ -57,6 +61,11 @@ final class Meta_Box {
 		$locked    = (bool) $g( Meta::SYNC_LOCKED );
 		$venue_ov  = (array) ( $g( Meta::VENUE_OVERRIDE ) ?: [] );
 
+		$featured    = (bool) $g( Meta::FEATURED );
+		$priority    = (int) $g( Meta::PRIORITY );
+		$short_title = (string) $g( Meta::SHORT_TITLE );
+		$sign_text   = (string) $g( Meta::SIGN_TEXT );
+
 		$role      = (string) $g( Meta::SERIES_ROLE ) ?: 'single';
 		$repeat    = (string) $g( Meta::REPEAT );
 		$rep_until = (string) $g( Meta::REPEAT_UNTIL );
@@ -89,6 +98,13 @@ final class Meta_Box {
 					<input type="time" class="gasf-time" name="gasf_end_time" value="<?php echo esc_attr( $end_time ); ?>">
 				</span>
 			</div>
+			<p class="description" style="margin:4px 0 0;"><?php
+				printf(
+					/* translators: %d: default duration in hours */
+					esc_html__( 'Leave the end blank for a %d-hour event. Google hours and Eventbrite both need a real end time.', 'gasf-events' ),
+					(int) ( self::DEFAULT_DURATION_MIN / 60 )
+				);
+			?></p>
 
 			<label class="row" for="gasf_status"><?php esc_html_e( 'Status', 'gasf-events' ); ?></label>
 			<select name="gasf_status" id="gasf_status">
@@ -107,6 +123,20 @@ final class Meta_Box {
 
 			<label class="row"><?php esc_html_e( 'Cost (USD, leave blank if free)', 'gasf-events' ); ?></label>
 			<input type="number" step="0.01" min="0" name="gasf_cost" value="<?php echo esc_attr( $cost ); ?>" style="width:120px;">
+
+			<fieldset class="adv">
+				<label class="row" style="margin-top:0;"><?php esc_html_e( 'Road sign & promotion', 'gasf-events' ); ?></label>
+				<p style="margin:4px 0 8px;">
+					<label><input type="checkbox" name="gasf_featured" value="1" <?php checked( $featured ); ?>> <?php esc_html_e( 'Featured — offer this event to the road sign and the home page', 'gasf-events' ); ?></label>
+					<label style="margin-left:18px;"><?php esc_html_e( 'Priority', 'gasf-events' ); ?>
+						<input type="number" name="gasf_priority" min="0" max="100" value="<?php echo esc_attr( $priority ?: '' ); ?>" placeholder="0" style="width:70px;">
+					</label>
+					<span class="description"><?php esc_html_e( '0–100, higher shows first among featured events.', 'gasf-events' ); ?></span>
+				</p>
+				<input type="text" name="gasf_short_title" maxlength="<?php echo (int) Meta::SHORT_TITLE_MAX; ?>" value="<?php echo esc_attr( $short_title ); ?>" placeholder="<?php echo esc_attr( sprintf( /* translators: %d: character limit */ __( 'Short title for the sign (up to %d characters; blank = the full title)', 'gasf-events' ), Meta::SHORT_TITLE_MAX ) ); ?>" style="width:48%;">
+				<input type="text" name="gasf_sign_text" maxlength="<?php echo (int) Meta::SIGN_TEXT_MAX; ?>" value="<?php echo esc_attr( $sign_text ); ?>" placeholder="<?php esc_attr_e( 'Sign text — a few words, e.g. “Sat 7 pm · $5 at the door”', 'gasf-events' ); ?>" style="width:48%;">
+				<p class="description" style="margin:4px 0 0;"><?php esc_html_e( 'Read by the road sign and kiosk through the events feed (short_title, sign_text, featured, priority). The website itself does not show these.', 'gasf-events' ); ?></p>
+			</fieldset>
 
 			<fieldset class="adv">
 				<label class="row" style="margin-top:0;"><?php esc_html_e( 'Override venue (optional — leave blank to use the club)', 'gasf-events' ); ?></label>
@@ -150,15 +180,32 @@ final class Meta_Box {
 			<?php if ( 'occurrence' === $role ) : ?>
 				<fieldset class="adv">
 					<label class="row" style="margin-top:0;"><?php esc_html_e( 'Recurring event', 'gasf-events' ); ?></label>
+					<?php
+					$master_id  = $series_id ? Series::master_of( $series_id ) : 0;
+					$customized = Series::is_customized( $post->ID );
+					$list_url   = add_query_arg( [ 'post_type' => GASF_EVENTS_CPT, 'gasf_series' => $series_id ], admin_url( 'edit.php' ) );
+					?>
 					<p style="margin:4px 0;">
-						<?php esc_html_e( 'This is one date in a recurring series. Editing here changes only this occurrence.', 'gasf-events' ); ?>
-						<?php
-						$siblings = $series_id ? Series::members( $series_id, 'master' ) : [];
-						if ( $siblings ) :
-							?>
-							<a href="<?php echo esc_url( get_edit_post_link( $siblings[0] ) ); ?>"><?php esc_html_e( 'Edit the series', 'gasf-events' ); ?></a>
+						<?php esc_html_e( 'This is one date in a recurring series.', 'gasf-events' ); ?>
+						<?php if ( $master_id ) : ?>
+							<a href="<?php echo esc_url( get_edit_post_link( $master_id ) ); ?>"><?php esc_html_e( 'Edit the series', 'gasf-events' ); ?></a> ·
 						<?php endif; ?>
+						<a href="<?php echo esc_url( $list_url ); ?>"><?php esc_html_e( 'Show all dates in this series', 'gasf-events' ); ?></a>
 					</p>
+					<?php if ( $master_id ) : // Feed-sourced series (Facebook, ICS) have no master: their rule lives at the source. ?>
+						<?php if ( $customized ) : ?>
+							<p style="margin:6px 0;padding:6px 10px;background:#fcf9e8;border-left:3px solid #dba617;">
+								<?php esc_html_e( 'You have edited this date by hand, so changes made to the whole series skip it.', 'gasf-events' ); ?>
+								<a href="<?php echo esc_url( Series::action_url( 'reattach', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Let series changes overwrite this date again?', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'Follow the series again', 'gasf-events' ); ?></a>
+							</p>
+						<?php else : ?>
+							<p class="description" style="margin:4px 0;"><?php esc_html_e( 'Edit anything here and this date keeps your change even when the whole series is changed later.', 'gasf-events' ); ?></p>
+						<?php endif; ?>
+						<p style="margin:8px 0 0;">
+							<a class="button button-small" href="<?php echo esc_url( Series::action_url( 'detach', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Make this date a standalone event? It leaves the series: series changes and "Delete series" will no longer touch it.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'Detach from series', 'gasf-events' ); ?></a>
+							<a class="button button-small" style="color:#b32d2e;" href="<?php echo esc_url( Series::action_url( 'end', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'End the series after this date? Every later date goes to Trash (restorable) and the repeat rule stops here.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'End the series after this date', 'gasf-events' ); ?></a>
+						</p>
+					<?php endif; ?>
 				</fieldset>
 			<?php else : ?>
 				<fieldset class="adv">
@@ -180,6 +227,27 @@ final class Meta_Box {
 							<label><input type="checkbox" name="gasf_apply_future" value="1"> <?php esc_html_e( 'Apply my changes to future occurrences in this series', 'gasf-events' ); ?></label>
 							<span style="color:#666;">(<?php echo esc_html( sprintf( /* translators: %d count */ __( '%d events in series', 'gasf-events' ), $series_n ) ); ?>)</span>
 						</p>
+						<?php
+						$plan     = Series::current_plan( $post->ID );
+						$n_custom = count( array_filter( Series::members( $series_id, 'occurrence' ), [ Series::class, 'is_customized' ] ) );
+						?>
+						<?php if ( $n_custom ) : ?>
+							<p class="description" style="margin:4px 0 0;"><?php echo esc_html( sprintf( /* translators: %d: number of dates */ _n( '%d date was edited by hand and keeps its own details when you apply changes.', '%d dates were edited by hand and keep their own details when you apply changes.', $n_custom, 'gasf-events' ), $n_custom ) ); ?></p>
+						<?php endif; ?>
+						<?php if ( $plan['orphans'] ) : ?>
+							<div style="margin:8px 0 0;padding:6px 10px;background:#fcf0f1;border-left:3px solid #b32d2e;">
+								<strong><?php echo esc_html( sprintf( /* translators: %d: number of dates */ _n( '%d upcoming date no longer fits the repeat rule:', '%d upcoming dates no longer fit the repeat rule:', count( $plan['orphans'] ), 'gasf-events' ), count( $plan['orphans'] ) ) ); ?></strong>
+								<?php echo esc_html( implode( ', ', array_map( static fn( $id ) => wp_date( 'D M j', (int) get_post_meta( $id, Meta::START_TS, true ) ), array_slice( $plan['orphans'], 0, 12 ) ) ) . ( count( $plan['orphans'] ) > 12 ? ', …' : '' ) ); ?>
+								<br><span class="description"><?php esc_html_e( 'This happens after shortening the series or moving it to another weekday. They are still on the calendar.', 'gasf-events' ); ?></span>
+								<br><a class="button button-small" style="margin-top:4px;" href="<?php echo esc_url( Series::action_url( 'trash_orphans', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Move these dates to Trash? Hand-edited dates are never included, and Trash can be restored.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'Move them to Trash', 'gasf-events' ); ?></a>
+								<?php if ( $plan['kept_custom'] ) : ?>
+									<br><span class="description"><?php echo esc_html( sprintf( /* translators: %d: number of dates */ _n( '%d hand-edited date also falls outside the rule and is left alone.', '%d hand-edited dates also fall outside the rule and are left alone.', count( $plan['kept_custom'] ), 'gasf-events' ), count( $plan['kept_custom'] ) ) ); ?></span>
+								<?php endif; ?>
+							</div>
+						<?php endif; ?>
+						<p style="margin:8px 0 0;">
+							<a class="button button-small" style="color:#b32d2e;" href="<?php echo esc_url( Series::action_url( 'end', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'End the series after this first date? Every later date goes to Trash (restorable) and the repeat rule stops here.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'End the series after this date', 'gasf-events' ); ?></a>
+						</p>
 					<?php else : ?>
 						<p class="description" style="margin:6px 0 0;"><?php esc_html_e( 'Saving will create the individual events for each date.', 'gasf-events' ); ?></p>
 					<?php endif; ?>
@@ -193,6 +261,15 @@ final class Meta_Box {
 					<label style="margin-left:14px;"><input type="checkbox" name="gasf_sync_locked" value="1" <?php checked( $locked ); ?>> <?php esc_html_e( "Pin — don't let the feed sync overwrite this event", 'gasf-events' ); ?></label>
 				<?php endif; ?>
 			</p>
+			<?php if ( $synced ) : ?>
+				<p class="description" style="margin-top:-8px;">
+					<?php
+					echo $locked
+						? esc_html__( 'Untick and save to resume syncing: the next feed run replaces the title, description and times with the feed\'s version. Editing any of those afterwards pins it again automatically.', 'gasf-events' )
+						: esc_html__( 'Editing the title, description or times pins this event automatically so the feed cannot undo your change.', 'gasf-events' );
+					?>
+				</p>
+			<?php endif; ?>
 		</div>
 		<script>
 		( function () {
@@ -227,20 +304,35 @@ final class Meta_Box {
 			return;
 		}
 
+		// For a date in a series: what it looked like before this save, so a
+		// real change can be told from the form simply re-posting every field.
+		$is_occurrence = 'occurrence' === (string) get_post_meta( $post_id, Meta::SERIES_ROLE, true );
+		$fp_before     = $is_occurrence ? Series::fingerprint( $post_id ) : '';
+
 		$all_day = ! empty( $_POST['gasf_all_day'] );
 
 		$start_date = sanitize_text_field( wp_unslash( $_POST['gasf_start_date'] ?? '' ) );
-		$start_time = $all_day ? '00:00' : sanitize_text_field( wp_unslash( $_POST['gasf_start_time'] ?? '00:00' ) );
+		$start_time = $all_day ? '00:00' : sanitize_text_field( wp_unslash( $_POST['gasf_start_time'] ?? '' ) );
 		$end_date   = sanitize_text_field( wp_unslash( $_POST['gasf_end_date'] ?? '' ) );
-		$end_time   = $all_day ? '23:59' : sanitize_text_field( wp_unslash( $_POST['gasf_end_time'] ?? '' ) );
+		$end_time   = $all_day ? '' : sanitize_text_field( wp_unslash( $_POST['gasf_end_time'] ?? '' ) );
 
-		if ( ! $end_date && $start_date ) {
-			$end_date = $start_date;
-			$end_time = $all_day ? '23:59' : ( $end_time ?: $start_time );
+		$start = $start_date ? $start_date . ' ' . ( $start_time ?: '00:00' ) . ':00' : '';
+		if ( '' === $start ) {
+			$end = '';
+		} elseif ( $all_day ) {
+			$end = ( $end_date ?: $start_date ) . ' 23:59:00';
+		} elseif ( $end_date && $end_time ) {
+			$end = $end_date . ' ' . $end_time . ':00';
+		} elseif ( $end_date ) {
+			// A date without a time: the same clock time as the start, that day.
+			$end = $end_date . ' ' . ( $start_time ?: '00:00' ) . ':00';
+		} else {
+			// Nothing at all: a default duration rather than a zero-length event.
+			// end == start used to be stored here, which the Business Profile hours
+			// sync skips, Eventbrite rejects, and .ics shows as a 0-minute event.
+			$s   = Meta::to_datetime( $start );
+			$end = $s ? $s->modify( '+' . self::DEFAULT_DURATION_MIN . ' minutes' )->format( 'Y-m-d H:i:s' ) : $start;
 		}
-
-		$start = $start_date ? trim( $start_date . ' ' . ( $start_time ?: '00:00' ) . ':00' ) : '';
-		$end   = $end_date ? trim( $end_date . ' ' . ( $end_time ?: '00:00' ) . ':00' ) : '';
 
 		// Guard: end must be >= start.
 		if ( $start && $end && Meta::local_to_ts( $end ) < Meta::local_to_ts( $start ) ) {
@@ -266,6 +358,23 @@ final class Meta_Box {
 			delete_post_meta( $post_id, Meta::COST );
 		}
 
+		// Road sign & promotion.
+		update_post_meta( $post_id, Meta::FEATURED, empty( $_POST['gasf_featured'] ) ? 0 : 1 );
+		$priority = max( 0, min( 100, (int) ( $_POST['gasf_priority'] ?? 0 ) ) );
+		if ( $priority > 0 ) {
+			update_post_meta( $post_id, Meta::PRIORITY, $priority );
+		} else {
+			delete_post_meta( $post_id, Meta::PRIORITY );
+		}
+		foreach ( [ 'gasf_short_title' => [ Meta::SHORT_TITLE, Meta::SHORT_TITLE_MAX ], 'gasf_sign_text' => [ Meta::SIGN_TEXT, Meta::SIGN_TEXT_MAX ] ] as $field => $spec ) {
+			$v = mb_substr( trim( sanitize_text_field( wp_unslash( $_POST[ $field ] ?? '' ) ) ), 0, $spec[1] );
+			if ( '' !== $v ) {
+				update_post_meta( $post_id, $spec[0], $v );
+			} else {
+				delete_post_meta( $post_id, $spec[0] );
+			}
+		}
+
 		// Venue override (only stored when a name is given).
 		$venue_in = (array) ( $_POST['gasf_venue'] ?? [] );
 		if ( ! empty( $venue_in['name'] ) ) {
@@ -286,16 +395,37 @@ final class Meta_Box {
 		// The sync pin (meaningful for any feed-sourced event: facebook, ics, …).
 		$event = Event::get( $post_id );
 		if ( $event && $event->is_synced() ) {
-			update_post_meta( $post_id, Meta::SYNC_LOCKED, empty( $_POST['gasf_sync_locked'] ) ? 0 : 1 );
+			// Read the stored value BEFORE writing: whether the box was ticked on the
+			// way in decides what an unticked box means on the way out.
+			$was_locked = (bool) get_post_meta( $post_id, Meta::SYNC_LOCKED, true );
+			$now_locked = ! empty( $_POST['gasf_sync_locked'] );
+			update_post_meta( $post_id, Meta::SYNC_LOCKED, $now_locked ? 1 : 0 );
 
-			// Auto-pin on edit: if the maintainer changed a synced field but left the
-			// pin off, pin it anyway so their edit isn't reverted by the next sync.
-			if ( empty( $_POST['gasf_sync_locked'] ) ) {
-				$snap = (string) get_post_meta( $post_id, Meta::FB_SNAPSHOT, true );
-				if ( '' !== $snap && $snap !== Event_Ingest::snapshot_post( $post_id ) ) {
-					update_post_meta( $post_id, Meta::SYNC_LOCKED, 1 );
+			if ( ! $now_locked ) {
+				if ( $was_locked ) {
+					// An explicit untick is "resume syncing". Until now this could never
+					// take effect: the auto-pin below compared the post against a snapshot
+					// that only a sync refreshes, and a sync skips pinned events, so once a
+					// pinned event had been edited the snapshot was stale forever and the
+					// pin came straight back on the same save. Re-base the snapshot on what
+					// is stored now so this save cannot re-pin itself; the next sync adopts
+					// the feed's values, and a later hand edit still auto-pins as before.
+					update_post_meta( $post_id, Meta::FB_SNAPSHOT, Event_Ingest::snapshot_post( $post_id ) );
+				} else {
+					// Auto-pin on edit: if the maintainer changed a synced field but left
+					// the pin off, pin it anyway so their edit isn't reverted by the next
+					// sync. Only reached when the pin was already off, so it can no longer
+					// override a deliberate untick.
+					$snap = (string) get_post_meta( $post_id, Meta::FB_SNAPSHOT, true );
+					if ( '' !== $snap && $snap !== Event_Ingest::snapshot_post( $post_id ) ) {
+						update_post_meta( $post_id, Meta::SYNC_LOCKED, 1 );
+					}
 				}
 			}
+		}
+
+		if ( $is_occurrence && ! Series::is_generating() ) {
+			Series::note_edit( $post_id, $fp_before );
 		}
 
 		// Recurrence — only on a standalone/master event, never a generated occurrence,
