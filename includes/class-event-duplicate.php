@@ -57,6 +57,8 @@ final class Event_Duplicate {
 		Meta::REPEAT,
 		Meta::REPEAT_UNTIL,
 		Meta::REPEAT_COUNT,
+		Meta::SERIES_SLOT,
+		Meta::SERIES_CUSTOMIZED,
 		Meta::VIEWS,
 		Meta::VIEWS_KIOSK,
 		Meta::VIEWS_DAILY,

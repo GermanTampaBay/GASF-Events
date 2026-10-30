@@ -180,18 +180,32 @@ final class Meta_Box {
 			<?php if ( 'occurrence' === $role ) : ?>
 				<fieldset class="adv">
 					<label class="row" style="margin-top:0;"><?php esc_html_e( 'Recurring event', 'gasf-events' ); ?></label>
+					<?php
+					$master_id  = $series_id ? Series::master_of( $series_id ) : 0;
+					$customized = Series::is_customized( $post->ID );
+					$list_url   = add_query_arg( [ 'post_type' => GASF_EVENTS_CPT, 'gasf_series' => $series_id ], admin_url( 'edit.php' ) );
+					?>
 					<p style="margin:4px 0;">
-						<?php esc_html_e( 'This is one date in a recurring series. Editing here changes only this occurrence.', 'gasf-events' ); ?>
-						<?php
-						$siblings = $series_id ? Series::members( $series_id, 'master' ) : [];
-						if ( $siblings ) :
-							?>
-							<a href="<?php echo esc_url( get_edit_post_link( $siblings[0] ) ); ?>"><?php esc_html_e( 'Edit the series', 'gasf-events' ); ?></a>
-						<?php elseif ( $series_id ) : ?>
-							<?php // Feed-sourced series (Facebook, ICS) have no master post: the rule lives at the source. ?>
-							<a href="<?php echo esc_url( add_query_arg( [ 'post_type' => GASF_EVENTS_CPT, 'gasf_series' => $series_id ], admin_url( 'edit.php' ) ) ); ?>"><?php esc_html_e( 'Show all dates in this series', 'gasf-events' ); ?></a>
+						<?php esc_html_e( 'This is one date in a recurring series.', 'gasf-events' ); ?>
+						<?php if ( $master_id ) : ?>
+							<a href="<?php echo esc_url( get_edit_post_link( $master_id ) ); ?>"><?php esc_html_e( 'Edit the series', 'gasf-events' ); ?></a> ·
 						<?php endif; ?>
+						<a href="<?php echo esc_url( $list_url ); ?>"><?php esc_html_e( 'Show all dates in this series', 'gasf-events' ); ?></a>
 					</p>
+					<?php if ( $master_id ) : // Feed-sourced series (Facebook, ICS) have no master: their rule lives at the source. ?>
+						<?php if ( $customized ) : ?>
+							<p style="margin:6px 0;padding:6px 10px;background:#fcf9e8;border-left:3px solid #dba617;">
+								<?php esc_html_e( 'You have edited this date by hand, so changes made to the whole series skip it.', 'gasf-events' ); ?>
+								<a href="<?php echo esc_url( Series::action_url( 'reattach', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Let series changes overwrite this date again?', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'Follow the series again', 'gasf-events' ); ?></a>
+							</p>
+						<?php else : ?>
+							<p class="description" style="margin:4px 0;"><?php esc_html_e( 'Edit anything here and this date keeps your change even when the whole series is changed later.', 'gasf-events' ); ?></p>
+						<?php endif; ?>
+						<p style="margin:8px 0 0;">
+							<a class="button button-small" href="<?php echo esc_url( Series::action_url( 'detach', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Make this date a standalone event? It leaves the series: series changes and "Delete series" will no longer touch it.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'Detach from series', 'gasf-events' ); ?></a>
+							<a class="button button-small" style="color:#b32d2e;" href="<?php echo esc_url( Series::action_url( 'end', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'End the series after this date? Every later date goes to Trash (restorable) and the repeat rule stops here.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'End the series after this date', 'gasf-events' ); ?></a>
+						</p>
+					<?php endif; ?>
 				</fieldset>
 			<?php else : ?>
 				<fieldset class="adv">
@@ -212,6 +226,27 @@ final class Meta_Box {
 						<p style="margin:8px 0 0;">
 							<label><input type="checkbox" name="gasf_apply_future" value="1"> <?php esc_html_e( 'Apply my changes to future occurrences in this series', 'gasf-events' ); ?></label>
 							<span style="color:#666;">(<?php echo esc_html( sprintf( /* translators: %d count */ __( '%d events in series', 'gasf-events' ), $series_n ) ); ?>)</span>
+						</p>
+						<?php
+						$plan     = Series::current_plan( $post->ID );
+						$n_custom = count( array_filter( Series::members( $series_id, 'occurrence' ), [ Series::class, 'is_customized' ] ) );
+						?>
+						<?php if ( $n_custom ) : ?>
+							<p class="description" style="margin:4px 0 0;"><?php echo esc_html( sprintf( /* translators: %d: number of dates */ _n( '%d date was edited by hand and keeps its own details when you apply changes.', '%d dates were edited by hand and keep their own details when you apply changes.', $n_custom, 'gasf-events' ), $n_custom ) ); ?></p>
+						<?php endif; ?>
+						<?php if ( $plan['orphans'] ) : ?>
+							<div style="margin:8px 0 0;padding:6px 10px;background:#fcf0f1;border-left:3px solid #b32d2e;">
+								<strong><?php echo esc_html( sprintf( /* translators: %d: number of dates */ _n( '%d upcoming date no longer fits the repeat rule:', '%d upcoming dates no longer fit the repeat rule:', count( $plan['orphans'] ), 'gasf-events' ), count( $plan['orphans'] ) ) ); ?></strong>
+								<?php echo esc_html( implode( ', ', array_map( static fn( $id ) => wp_date( 'D M j', (int) get_post_meta( $id, Meta::START_TS, true ) ), array_slice( $plan['orphans'], 0, 12 ) ) ) . ( count( $plan['orphans'] ) > 12 ? ', …' : '' ) ); ?>
+								<br><span class="description"><?php esc_html_e( 'This happens after shortening the series or moving it to another weekday. They are still on the calendar.', 'gasf-events' ); ?></span>
+								<br><a class="button button-small" style="margin-top:4px;" href="<?php echo esc_url( Series::action_url( 'trash_orphans', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Move these dates to Trash? Hand-edited dates are never included, and Trash can be restored.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'Move them to Trash', 'gasf-events' ); ?></a>
+								<?php if ( $plan['kept_custom'] ) : ?>
+									<br><span class="description"><?php echo esc_html( sprintf( /* translators: %d: number of dates */ _n( '%d hand-edited date also falls outside the rule and is left alone.', '%d hand-edited dates also fall outside the rule and are left alone.', count( $plan['kept_custom'] ), 'gasf-events' ), count( $plan['kept_custom'] ) ) ); ?></span>
+								<?php endif; ?>
+							</div>
+						<?php endif; ?>
+						<p style="margin:8px 0 0;">
+							<a class="button button-small" style="color:#b32d2e;" href="<?php echo esc_url( Series::action_url( 'end', $post->ID ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'End the series after this first date? Every later date goes to Trash (restorable) and the repeat rule stops here.', 'gasf-events' ) ); ?>');"><?php esc_html_e( 'End the series after this date', 'gasf-events' ); ?></a>
 						</p>
 					<?php else : ?>
 						<p class="description" style="margin:6px 0 0;"><?php esc_html_e( 'Saving will create the individual events for each date.', 'gasf-events' ); ?></p>
@@ -268,6 +303,11 @@ final class Meta_Box {
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			return;
 		}
+
+		// For a date in a series: what it looked like before this save, so a
+		// real change can be told from the form simply re-posting every field.
+		$is_occurrence = 'occurrence' === (string) get_post_meta( $post_id, Meta::SERIES_ROLE, true );
+		$fp_before     = $is_occurrence ? Series::fingerprint( $post_id ) : '';
 
 		$all_day = ! empty( $_POST['gasf_all_day'] );
 
@@ -382,6 +422,10 @@ final class Meta_Box {
 					}
 				}
 			}
+		}
+
+		if ( $is_occurrence && ! Series::is_generating() ) {
+			Series::note_edit( $post_id, $fp_before );
 		}
 
 		// Recurrence — only on a standalone/master event, never a generated occurrence,

@@ -207,6 +207,14 @@ The club currently hand-creates every Euchre night, Crafting session, Dinner Nig
 - **Edit this & future** (re-stamp forward occurrences from the master), **edit just this one** (detaches it: `_gasf_series_role` stays `occurrence` but pinned from series edits), **delete this one**, **delete the series**.
 - A list-table "Series" filter/column so 52 Euchre nights collapse to one manageable group.
 
+**As built (v0.38.0).** Each occurrence records its **slot** (`_gasf_series_slot`, the date the rule gave it), and the series matches occurrences to the rule by slot rather than by current date — before, a date moved by hand no longer "occupied" its slot and the next master save re-created a duplicate there. `Series::plan()` is a pure function (unit-tested) that turns *rule slots + current occurrences* into **create / apply / orphans / kept_custom**:
+- **Hand edits stick.** Editing a date's title, description, status, times or details marks it `_gasf_series_customized`; "Apply my changes to future occurrences" and the master's publish/unpublish mirror both skip it. The occurrence's editor says so and offers **Follow the series again**.
+- **Detach from series** makes a date a standalone event (it leaves the series entirely).
+- **End the series after this date** (on any date, or the first) trashes every later date and cuts the master's rule to stop there, so the next save cannot re-create them. Trash, so it is reversible.
+- **Orphans.** Shortening the rule or moving the master to another weekday leaves future dates the rule no longer produces. They are **not** deleted automatically: the master's editor lists them by date with **Move them to Trash** (recomputed on click; hand-edited dates are never included and are reported separately). Moving a series to another weekday is therefore: change the master's date, tick Apply, save, then trash the old dates.
+- These controls appear only for series built in the editor. A Facebook/ICS series has no master and is rebuilt from its source on every sync, so it is managed at the source.
+- All Events shows *first date* / *edited* under the Recurring ✓, a 📌 next to pinned feed events, and a **Pinned only** filter. Series hooks now load outside wp-admin too, so block-editor saves (REST) and scheduled publishes (cron) are covered.
+
 **FB recurring unification:** Facebook recurring events (the `event_times[]` expansion in §6.2) use the **same** `_gasf_series_id` mechanism — one FB recurring event → one series of flat occurrences sharing a cover. So manual and FB recurrence are one concept, one set of bulk actions, one mental model. (This subsumes today's `gasf_mec_recurring_parent` hack.)
 
 **Why flat-but-grouped:** keeps every downstream surface (month grid, print, JSON-LD, iCal, kiosk feed) querying simple individual events with real dates, while giving maintainers "manage the whole series" ergonomics. Best of both, no recurrence engine.

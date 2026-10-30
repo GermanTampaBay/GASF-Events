@@ -117,11 +117,13 @@ final class Plugin {
 		( new Cache() )->register_hooks();
 		( new Health() )->register_hooks();
 		( new Webhooks() )->register_hooks();
+		// Not admin-only: the block editor saves through REST and a scheduled
+		// master publishes from cron, and both must reach the series hooks.
+		( new Series() )->register_hooks();
 
 		if ( is_admin() ) {
 			( new Meta_Box() )->register_hooks();
 			( new Admin_List() )->register_hooks();
-			( new Series() )->register_hooks();
 			( new Feeds_Admin() )->register_hooks();
 			( new Bulk_Actions() )->register_hooks();
 			( new Event_Duplicate() )->register_hooks();

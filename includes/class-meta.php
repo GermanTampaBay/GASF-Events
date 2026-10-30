@@ -68,6 +68,9 @@ final class Meta {
 	const REPEAT       = '_gasf_repeat';       // '' | weekly | biweekly | monthly (on the master)
 	const REPEAT_UNTIL = '_gasf_repeat_until'; // Y-m-d (ends-on) — mutually exclusive with count
 	const REPEAT_COUNT = '_gasf_repeat_count'; // int (number of occurrences incl. first)
+	// v0.38.0 — per-occurrence series bookkeeping.
+	const SERIES_SLOT       = '_gasf_series_slot';       // Y-m-d the RULE gave this occurrence, kept when it is moved by hand
+	const SERIES_CUSTOMIZED = '_gasf_series_customized'; // bool — edited by hand; "apply to future" and orphan clean-up leave it alone
 
 	/** Allowed repeat frequencies. */
 	const REPEATS      = [ '', 'weekly', 'biweekly', 'monthly' ];
@@ -174,7 +177,7 @@ final class Meta {
 			self::START, self::END, self::STATUS, self::STATUS_REASON, self::ONLINE_LINK,
 			self::MORE_INFO_URL, self::MORE_INFO_TITLE, self::SOURCE, self::FB_EVENT_ID,
 			self::FB_COVER_ID, self::SERIES_ID, self::SERIES_ROLE,
-			self::REPEAT, self::REPEAT_UNTIL, self::SHORT_TITLE, self::SIGN_TEXT,
+			self::REPEAT, self::REPEAT_UNTIL, self::SHORT_TITLE, self::SIGN_TEXT, self::SERIES_SLOT,
 		];
 		foreach ( $string_keys as $key ) {
 			register_post_meta( GASF_EVENTS_CPT, $key, [
@@ -197,7 +200,7 @@ final class Meta {
 			] );
 		}
 
-		$bool_keys = [ self::ALL_DAY, self::HIDE_TIME, self::HIDE_END, self::SYNC_LOCKED, self::FEATURED ];
+		$bool_keys = [ self::ALL_DAY, self::HIDE_TIME, self::HIDE_END, self::SYNC_LOCKED, self::FEATURED, self::SERIES_CUSTOMIZED ];
 		foreach ( $bool_keys as $key ) {
 			register_post_meta( GASF_EVENTS_CPT, $key, [
 				'type'              => 'boolean',
