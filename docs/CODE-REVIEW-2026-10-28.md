@@ -188,6 +188,15 @@ and releases" and ARCHITECTURE §4.7 "As built (v0.38.0)".
 - **Series menu "Edit the series" link** (`class-meta-box.php:157-160`) uses the first
   `master` member; FB-sourced series have no master (`class-event-ingest.php:114-116`),
   so FB occurrences never get the link. Cosmetic.
+- **`/events/calendar.ics` answered with a 301, not the calendar** (found by the new
+  CI HTTP check, fixed in v0.38.0). The pretty URL resolves to only `gasf_ics=all`,
+  so WP_Query treats the request as the front page, and core's `redirect_canonical`
+  (on `template_redirect`, priority 10, registered before ours) redirects it to
+  `/events/calendar.ics/` (`wp-includes/canonical.php`, the
+  `elseif ( is_front_page() )` trailing-slash branch, verified against the 6.8
+  source). Every subscriber poll paid an extra redirect, to a URL no longer ending in
+  `.ics`. `Add_To_Calendar` now serves at priority 0. CI requests the URL without
+  following redirects and requires 200 + `text/calendar`.
 
 ---
 

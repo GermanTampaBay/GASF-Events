@@ -16,7 +16,12 @@ final class Add_To_Calendar {
 
 	public function register_hooks(): void {
 		add_action( 'init', [ $this, 'add_query_var' ] );
-		add_action( 'template_redirect', [ $this, 'maybe_serve_ics' ] );
+		// Priority 0: ahead of core's redirect_canonical (priority 10). A request
+		// for /events/calendar.ics carries only gasf_ics=all, so WP_Query reads it
+		// as the front page and redirect_canonical 301s it to ".../calendar.ics/"
+		// (canonical.php, "elseif ( is_front_page() )"), costing every subscriber
+		// poll a redirect to a URL that no longer ends in .ics.
+		add_action( 'template_redirect', [ $this, 'maybe_serve_ics' ], 0 );
 		add_action( 'init', [ $this, 'add_rewrite' ] );
 	}
 

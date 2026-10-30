@@ -111,7 +111,13 @@ jobs:
           [ -n "$etag" ] || { echo "::error::REST feed sent no ETag"; exit 1; }
           code=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $etag" "$api")
           [ "$code" = "304" ] || { echo "::error::If-None-Match returned $code, expected 304"; exit 1; }
-          curl -fsS "$base/events/calendar.ics" | grep -q 'BEGIN:VCALENDAR' || { echo "::error::calendar.ics is not a calendar"; exit 1; }
+          # No -L: the feed must answer 200 itself. Calendar clients poll this URL
+          # and not all of them follow redirects.
+          ics=$(mktemp)
+          read -r code ctype < <(curl -sS -o "$ics" -w '%{http_code} %{content_type}\n' "$base/events/calendar.ics")
+          [ "$code" = "200" ] || { echo "::error::calendar.ics returned $code, expected 200"; curl -sSI "$base/events/calendar.ics"; exit 1; }
+          [[ "$ctype" == text/calendar* ]] || { echo "::error::calendar.ics Content-Type is '$ctype'"; exit 1; }
+          grep -q 'BEGIN:VCALENDAR' "$ics" || { echo "::error::calendar.ics is not a calendar"; head -c 500 "$ics"; exit 1; }
           echo "event page, REST ETag/304 and calendar.ics OK"
       - name: PHP error log is clean
         if: always()
