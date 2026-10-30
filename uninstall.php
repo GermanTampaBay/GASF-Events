@@ -49,7 +49,7 @@ foreach ( [
 }
 foreach ( [
 	'gasf_events_gbp_token', 'gasf_events_gbp_regular', 'gasf_events_update_check',
-	'gasf_events_asset_ver', 'gasf_ics_all', 'gasf_events_heartbeat_check',
+	'gasf_events_asset_ver', 'gasf_ics_all', 'gasf_events_heartbeat_check', 'gasf_events_update_package',
 ] as $gasf_tr ) {
 	delete_transient( $gasf_tr );
 }

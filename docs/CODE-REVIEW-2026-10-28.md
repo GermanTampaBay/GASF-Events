@@ -29,7 +29,9 @@ and the `ETag`/304 conditional GET from §2) and the health screen with a cron h
 were built in v0.36.0 — see `includes/class-seo.php`, `class-cache.php`, `class-health.php`
 and ARCHITECTURE §5.7 and §10 (questions 4 and 5). Items 3 (webhooks, `class-webhooks.php`)
 and 4 (the display and promotion fields and filters in §2 above) were built in v0.37.0 —
-see ARCHITECTURE §7 and REST-API.md.
+see ARCHITECTURE §7 and REST-API.md. Items 6 (tests, CI, releases — §3.9 above) and 7
+(series management completeness) were built in v0.38.0 — see README "Development, tests
+and releases" and ARCHITECTURE §4.7 "As built (v0.38.0)".
 
 ---
 

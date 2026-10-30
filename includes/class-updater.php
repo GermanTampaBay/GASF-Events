@@ -2,11 +2,14 @@
 /**
  * GitHub-based plugin updates (WP 5.8+ `Update URI` mechanism).
  *
- * The repo is public, so no credentials are needed: we read the Version header
- * from the raw main branch and offer GitHub's branch zipball as the package.
- * WordPress's normal update + auto-update UI then works on any install that
- * runs this as a regular plugin. Version discipline: bump the Version header
- * in gasf-events.php or installs will never see the new code.
+ * The repo is public, so no credentials are needed. Since v0.38.0 updates come
+ * from the latest GitHub RELEASE (see channel()): bump the Version header in
+ * gasf-events.php and merge to main; CI runs the tests and, only if they pass,
+ * tags v<version> and publishes a release with a ready-made gasf-events.zip.
+ * WordPress's normal update + auto-update UI then offers it. A version that
+ * fails its tests is never released, so it never reaches the site.
+ * The pre-v0.38.0 behaviour (follow the head of main) is still available as
+ * the 'main' channel for a staging copy.
  *
  * @package GASF_Events
  */
@@ -24,7 +27,25 @@ final class Updater {
 	const REPO      = 'GermanTampaBay/GASF-Events';
 	const RAW_MAIN  = 'https://raw.githubusercontent.com/GermanTampaBay/GASF-Events/main/gasf-events.php';
 	const PACKAGE   = 'https://github.com/GermanTampaBay/GASF-Events/archive/refs/heads/main.zip';
-	const CACHE_KEY = 'gasf_events_update_check';
+	const LATEST    = 'https://api.github.com/repos/GermanTampaBay/GASF-Events/releases/latest';
+	const ASSET     = 'gasf-events.zip'; // built by .github/workflows/ci.yml, folder already named GASF-Events/
+	const CACHE_KEY = 'gasf_events_update_check';         // remote version string (Health reads it)
+	const PKG_KEY   = 'gasf_events_update_package';       // remote package URL
+
+	/**
+	 * Where updates come from (v0.38.0).
+	 *
+	 * 'release' (default): the latest GitHub RELEASE. CI creates one only after
+	 * the tests pass on main, so a broken commit on main can no longer reach
+	 * the live site within fifteen minutes the way it could before.
+	 *
+	 * 'main': the head of the main branch, the pre-v0.38.0 behaviour. For a
+	 * staging copy that should see every push: in wp-config.php,
+	 *   define( 'GASF_EVENTS_UPDATE_CHANNEL', 'main' );
+	 */
+	public static function channel(): string {
+		return ( defined( 'GASF_EVENTS_UPDATE_CHANNEL' ) && 'main' === GASF_EVENTS_UPDATE_CHANNEL ) ? 'main' : 'release';
+	}
 
 	private string $file; // absolute path to gasf-events.php
 
@@ -147,8 +168,10 @@ final class Updater {
 		if ( plugin_basename( $this->file ) !== $plugin_file ) {
 			return $update;
 		}
-		$remote = $this->remote_version();
-		if ( ! $remote || version_compare( $remote, (string) $plugin_data['Version'], '<=' ) ) {
+		[ $remote, $package ] = 'main' === self::channel()
+			? [ $this->remote_version(), self::PACKAGE ]
+			: $this->latest_release();
+		if ( ! $remote || ! $package || version_compare( $remote, (string) $plugin_data['Version'], '<=' ) ) {
 			return $update; // up to date (or check failed — never downgrade/loop)
 		}
 		return [
@@ -156,9 +179,54 @@ final class Updater {
 			'slug'    => dirname( $plugin_file ),
 			'plugin'  => $plugin_file,
 			'version' => $remote,
-			'url'     => 'https://github.com/' . self::REPO,
-			'package' => self::PACKAGE,
+			'url'     => 'https://github.com/' . self::REPO . ( 'main' === self::channel() ? '' : '/releases/tag/v' . $remote ),
+			'package' => $package,
 		];
+	}
+
+	/**
+	 * Latest GitHub release: [ version, package URL ], or [ '', '' ] when it
+	 * cannot be read (no release yet, network down, rate-limited). A failed
+	 * read offers no update rather than a wrong one, and is retried after the
+	 * same 15 minutes. The unauthenticated API allows 60 calls an hour per IP;
+	 * this makes at most 4.
+	 *
+	 * The package is the release's own gasf-events.zip when present (built by
+	 * CI with the right folder name and without tests/ or .github/), else
+	 * GitHub's source zipball, which fix_folder() renames.
+	 *
+	 * @return array{0:string,1:string}
+	 */
+	private function latest_release(): array {
+		$v = get_transient( self::CACHE_KEY );
+		$p = get_transient( self::PKG_KEY );
+		if ( is_string( $v ) && is_string( $p ) ) {
+			return [ $v, $p ];
+		}
+		$ver  = '';
+		$pkg  = '';
+		$resp = wp_remote_get( self::LATEST, [
+			'timeout' => 15,
+			'headers' => [ 'Accept' => 'application/vnd.github+json', 'User-Agent' => 'GASF-Events-updater' ],
+		] );
+		if ( ! is_wp_error( $resp ) && 200 === (int) wp_remote_retrieve_response_code( $resp ) ) {
+			$rel = json_decode( (string) wp_remote_retrieve_body( $resp ), true );
+			$tag = is_array( $rel ) ? ltrim( (string) ( $rel['tag_name'] ?? '' ), 'vV' ) : '';
+			if ( preg_match( '/^[0-9][0-9a-z.\-]*$/i', $tag ) && empty( $rel['draft'] ) && empty( $rel['prerelease'] ) ) {
+				$ver = $tag;
+				foreach ( (array) ( $rel['assets'] ?? [] ) as $a ) {
+					if ( self::ASSET === ( $a['name'] ?? '' ) && ! empty( $a['browser_download_url'] ) ) {
+						$pkg = (string) $a['browser_download_url'];
+					}
+				}
+				if ( '' === $pkg ) {
+					$pkg = (string) ( $rel['zipball_url'] ?? '' );
+				}
+			}
+		}
+		set_transient( self::CACHE_KEY, $ver, 15 * MINUTE_IN_SECONDS );
+		set_transient( self::PKG_KEY, $pkg, 15 * MINUTE_IN_SECONDS );
+		return [ $ver, $pkg ];
 	}
 
 	/** Latest Version: header on the main branch (cached 15 min — was 6 h,

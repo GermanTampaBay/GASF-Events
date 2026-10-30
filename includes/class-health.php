@@ -312,7 +312,13 @@ final class Health {
 		$rows[] = [
 			__( 'Plugin version', 'gasf-events' ),
 			( '' !== $remote && version_compare( $remote, GASF_EVENTS_VERSION, '>' ) ) ? 'warn' : 'ok',
-			sprintf( __( 'Installed %1$s · GitHub main %2$s', 'gasf-events' ), GASF_EVENTS_VERSION, '' !== $remote ? $remote : __( 'not checked yet', 'gasf-events' ) ),
+			sprintf(
+				/* translators: 1: installed version, 2: where updates come from, 3: the version found there */
+				__( 'Installed %1$s · %2$s %3$s', 'gasf-events' ),
+				GASF_EVENTS_VERSION,
+				'main' === Updater::channel() ? __( 'GitHub main branch', 'gasf-events' ) : __( 'latest GitHub release', 'gasf-events' ),
+				'' !== $remote ? $remote : __( 'not found yet (none published, or not checked)', 'gasf-events' )
+			),
 		];
 
 		// 8. Assets on disk — the Alpine file was missing for several releases.
