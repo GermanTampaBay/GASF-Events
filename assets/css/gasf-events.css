@@ -29,6 +29,11 @@
 	--gasf-chip: #f3efe6;
 	--gasf-radius: 8px;
 	--gasf-cancelled: #e0584f;
+	/* Soft wash behind each day in the list view: the surface colour at 40%,
+	   so it tints the theme's own background (lighter here, darker on a dark
+	   theme that sets --gasf-surface) and text keeps the theme's colour.
+	   `transparent` turns it off. */
+	--gasf-day-bg: color-mix(in srgb, var(--gasf-surface) 40%, transparent);
 	/* no base `color` — inherit the theme's content color for readability */
 }
 [x-cloak] { display: none !important; }
@@ -125,7 +130,11 @@
 /* ---- Upcoming list ---- */
 .gasf-list__tools { margin:0 0 14px; }
 .gasf-list__search { width:100%; max-width:340px; padding:8px 12px; border:1px solid var(--gasf-border); border-radius:var(--gasf-radius); }
-.gasf-list__date { font-size:1rem; margin:18px 0 8px; padding-bottom:4px; border-bottom:2px solid var(--gasf-accent); }
+/* Each day is one card: the accent rule runs along its top edge, above the
+   date, and the --gasf-day-bg wash sits behind the date and its events
+   together, so a day with two events reads as one block. */
+.gasf-list__day { margin:0 0 18px; padding:2px 14px 6px; border-top:2px solid var(--gasf-accent); border-radius:0 0 var(--gasf-radius) var(--gasf-radius); background:var(--gasf-day-bg); }
+.gasf-list__date { font-size:1rem; margin:6px 0 2px; }
 .gasf-row { display:flex; gap:12px; padding:8px 0; align-items:center; }
 .gasf-row__media img { width:84px; height:60px; object-fit:cover; border-radius:6px; display:block; }
 .gasf-row__title { font-weight:600; text-decoration:none; color:inherit; }
