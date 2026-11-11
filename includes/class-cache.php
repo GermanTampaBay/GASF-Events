@@ -25,8 +25,14 @@ final class Cache {
 
 	const OPT_LAST = 'gasf_events_last_purge';
 
+	/** The plugin version the caches were last purged for (see on_version_change). */
+	const OPT_PURGED_VER = 'gasf_events_purged_ver';
+
 	/** @var bool A purge is due at the end of this request. */
 	private static $pending = false;
+
+	/** @var bool The due purge must also drop combined/minified CSS and JS. */
+	private static $pending_assets = false;
 
 	/** Settings whose change alters rendered pages. */
 	const DISPLAY_OPTIONS = [
@@ -42,7 +48,28 @@ final class Cache {
 		add_action( 'updated_option', [ __CLASS__, 'on_option' ], 30, 1 );
 		// Fired by Feeds::run() after a real (non-dry) run that changed anything.
 		add_action( 'gasf_events_feed_run_complete', [ __CLASS__, 'schedule' ] );
+		add_action( 'init', [ __CLASS__, 'on_version_change' ] );
 		add_action( 'shutdown', [ __CLASS__, 'flush_pending' ] );
+	}
+
+	/**
+	 * A new plugin version changes the CSS, JS and templates, but the page
+	 * caches keep serving pages built by the old one: v0.38.1 installed fine
+	 * on the Krampus site while every logged-out visitor still got the cached
+	 * page pointing at the old SpeedyCache-combined stylesheet.
+	 *
+	 * Detected here, on the first request the new code runs, rather than in
+	 * the updater: the request that performs an update still has the OLD
+	 * classes loaded, and an update can also arrive by FTP or WP-CLI. One
+	 * autoloaded option read per uncached request; the option is written
+	 * before the purge so concurrent first requests do not all repeat it.
+	 */
+	public static function on_version_change(): void {
+		if ( (string) get_option( self::OPT_PURGED_VER, '' ) === GASF_EVENTS_VERSION ) {
+			return;
+		}
+		update_option( self::OPT_PURGED_VER, GASF_EVENTS_VERSION, true );
+		self::schedule( true );
 	}
 
 	/* ---- triggers ----------------------------------------------------- */
@@ -76,15 +103,24 @@ final class Cache {
 		}
 	}
 
-	/** Mark a purge due; it runs once at shutdown. */
-	public static function schedule(): void {
+	/**
+	 * Mark a purge due; it runs once at shutdown. $assets also drops the
+	 * combined/minified CSS and JS — needed when the plugin's own files
+	 * changed, wasted work when only an event did. (Typed loosely because it
+	 * is also an action callback, and actions may pass arguments.)
+	 */
+	public static function schedule( $assets = false ): void {
 		self::$pending = true;
+		if ( true === $assets ) {
+			self::$pending_assets = true;
+		}
 	}
 
 	public static function flush_pending(): void {
 		if ( self::$pending ) {
 			self::$pending = false;
-			self::purge();
+			self::purge( self::$pending_assets );
+			self::$pending_assets = false;
 		}
 	}
 
@@ -94,9 +130,11 @@ final class Cache {
 	 * Purge everything that could hold a stale calendar. Returns the names of
 	 * the caches it reached, for the Health screen and the log.
 	 *
+	 * @param bool $assets Also delete combined/minified CSS and JS, for when
+	 *                     the plugin itself changed (or a maintainer asked).
 	 * @return string[]
 	 */
-	public static function purge(): array {
+	public static function purge( bool $assets = false ): array {
 		$done = [];
 
 		// Our own caches first.
@@ -131,6 +169,12 @@ final class Cache {
 		if ( class_exists( 'LiteSpeed_Cache_API' ) && method_exists( 'LiteSpeed_Cache_API', 'purge_all' ) ) {
 			\LiteSpeed_Cache_API::purge_all();
 			$done[] = 'LiteSpeed Cache';
+		}
+		if ( class_exists( '\SpeedyCache\Delete' ) && method_exists( '\SpeedyCache\Delete', 'run' ) ) { // SpeedyCache (Krampus)
+			// run() always clears the page cache; 'minified' also deletes the
+			// combined CSS/JS, which is where the old stylesheet lingered.
+			\SpeedyCache\Delete::run( $assets ? [ 'minified' => true ] : [] );
+			$done[] = $assets ? 'SpeedyCache (pages + combined CSS/JS)' : 'SpeedyCache';
 		}
 		if ( has_action( 'cloudflare_purge_everything' ) ) { // Cloudflare plugin (purge hook)
 			do_action( 'cloudflare_purge_everything' );

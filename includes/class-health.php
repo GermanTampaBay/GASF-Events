@@ -156,7 +156,7 @@ final class Health {
 			wp_die( esc_html__( 'Not allowed.', 'gasf-events' ) );
 		}
 		check_admin_referer( 'gasf_health_purge' );
-		$done = Cache::purge();
+		$done = Cache::purge( true );
 		wp_safe_redirect( add_query_arg( 'gasf_msg', rawurlencode( sprintf(
 			/* translators: %s: list of cache names */
 			__( 'Purged: %s.', 'gasf-events' ),
