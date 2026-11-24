@@ -39,13 +39,20 @@ final class FB_Client {
 		}
 
 		$fields = 'id,name,description,start_time,end_time,is_canceled,updated_time,place,cover{id,source},event_times';
+		// No `since`: Graph applies it to a recurring event's PARENT start_time,
+		// so once a weekly series' first date is older than the cutoff the whole
+		// series - every future date included - silently drops out of the
+		// response, and prune_missing() then unpublishes those dates as "gone
+		// from Facebook" (Biergarten, Nov 2026). `time_filter=upcoming` already
+		// limits the page to events/series that have not ended; past occurrences
+		// of a still-running series are trimmed client-side in normalize().
 		$url = add_query_arg( [
 			'fields'       => $fields,
 			'time_filter'  => 'upcoming',
-			'since'        => time() - $past_grace_days * DAY_IN_SECONDS,
 			'limit'        => 100,
 			'access_token' => $token,
 		], self::API . rawurlencode( $page ) . '/events' );
+		$cutoff = time() - $past_grace_days * DAY_IN_SECONDS;
 
 		$events = [];
 		$guard  = 0;
@@ -67,7 +74,7 @@ final class FB_Client {
 				return [ 'events' => $events, 'error' => self::redact( $msg ) ];
 			}
 			foreach ( (array) ( $body['data'] ?? [] ) as $raw ) {
-				$norm = self::normalize( $raw, (string) ( $account['id'] ?? '' ) );
+				$norm = self::normalize( $raw, (string) ( $account['id'] ?? '' ), $cutoff );
 				if ( $norm ) {
 					$events[] = $norm;
 				}
@@ -82,9 +89,13 @@ final class FB_Client {
 	 * Normalize a raw FB event into our shape, expanding recurring `event_times`
 	 * into one flat occurrence each (shared series id = base event id).
 	 *
+	 * Occurrences that ended before $cutoff (unix ts; 0 = keep all) are
+	 * dropped: a recurring series comes back with every date it ever had,
+	 * and only the current ones belong in the sync. Null when nothing is left.
+	 *
 	 * @return array|null
 	 */
-	private static function normalize( array $raw, string $account_id ): ?array {
+	public static function normalize( array $raw, string $account_id, int $cutoff = 0 ): ?array {
 		$base_id = (string) ( $raw['id'] ?? '' );
 		if ( '' === $base_id ) {
 			return null;
@@ -106,6 +117,9 @@ final class FB_Client {
 			// Recurring → one flat occurrence per entry, grouped as a series.
 			$occ = [];
 			foreach ( $times as $t ) {
+				if ( self::ended_before( (string) ( $t['start_time'] ?? '' ), (string) ( $t['end_time'] ?? '' ), $cutoff ) ) {
+					continue;
+				}
 				$occ[] = $common + [
 					'fb_id'     => (string) ( $t['id'] ?? ( $base_id . '@' . ( $t['start_time'] ?? '' ) ) ),
 					'series_id' => 'fb-' . $base_id,
@@ -114,9 +128,12 @@ final class FB_Client {
 					'end'       => self::dt( (string) ( $t['end_time'] ?? '' ) ),
 				];
 			}
-			return [ 'recurring' => true, 'occurrences' => $occ ];
+			return $occ ? [ 'recurring' => true, 'occurrences' => $occ ] : null;
 		}
 
+		if ( self::ended_before( (string) ( $raw['start_time'] ?? '' ), (string) ( $raw['end_time'] ?? '' ), $cutoff ) ) {
+			return null;
+		}
 		return [
 			'recurring'   => false,
 			'occurrences' => [ $common + [
@@ -127,6 +144,19 @@ final class FB_Client {
 				'end'       => self::dt( (string) ( $raw['end_time'] ?? '' ) ),
 			] ],
 		];
+	}
+
+	/** True when an occurrence ended (or, with no end, started) before $cutoff. Unparseable times are kept. */
+	private static function ended_before( string $start_iso, string $end_iso, int $cutoff ): bool {
+		if ( $cutoff <= 0 ) {
+			return false;
+		}
+		$iso = '' !== trim( $end_iso ) ? $end_iso : $start_iso;
+		try {
+			return ( new \DateTimeImmutable( trim( $iso ) ) )->getTimestamp() < $cutoff;
+		} catch ( \Exception $e ) {
+			return false;
+		}
 	}
 
 	/** Parse an FB ISO datetime (with offset) into a site-local Y-m-d H:i:s string. */

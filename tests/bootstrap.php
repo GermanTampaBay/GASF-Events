@@ -116,6 +116,7 @@ namespace {
 	require_once $dir . 'class-meta.php';
 	require_once $dir . 'class-recurrence.php';
 	require_once $dir . 'class-ics-parser.php';
+	require_once $dir . 'class-fb-client.php';
 	require_once $dir . 'class-event-merge.php';
 	require_once $dir . 'class-event.php';
 	require_once $dir . 'class-series.php';
